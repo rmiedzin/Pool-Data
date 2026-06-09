@@ -1,0 +1,8 @@
+default_fqbn: esp32:esp32:esp32dev:UploadSpeed=460800,PartitionScheme=min_spiffs
+default_port: ""
+
+profiles:
+  esp32dev:
+    fqbn: esp32:esp32:esp32dev:UploadSpeed=460800,PartitionScheme=min_spiffs
+    platforms:
+      - platform: esp32:esp32
