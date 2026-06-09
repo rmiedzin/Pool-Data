@@ -3,7 +3,7 @@
 //  v1.0 — Touch + 4 vues + rétroéclairage PWM
 //  Voir CHANGELOG.md pour l'historique
 // ═══════════════════════════════════════════════════════════
-#define FW_VERSION "v1.1"
+#define FW_VERSION "v1.2"
 
 #ifndef ARDUINO_ARCH_ESP32
   #error "Board incorrect — sélectionner : Tools > Board > ESP32 Dev Module"
@@ -19,6 +19,7 @@
 #include <TFT_eSPI.h>  // FreeSans9pt7b / FreeSansBold12/18/24pt7b inclus via gfxfont.h
 #include <esp_task_wdt.h>
 #include <esp_system.h>   // esp_reset_reason()
+#include <ArduinoOTA.h>
 #include "secrets.h"
 
 // ── WiFi / NTP ──────────────────────────────────────────────
@@ -912,6 +913,63 @@ void setup() {
     lastNTPSync = millis();
   }
 
+  // ── ArduinoOTA ──
+  if (g_wifiOK) {
+    splashLog("> OTA init...");
+    ArduinoOTA.setHostname("pool-data");
+    // ArduinoOTA.setPassword("pooldata");   // décommenter pour protéger
+
+    ArduinoOTA.onStart([]() {
+      esp_task_wdt_reset();
+      Serial.println(F("OTA : debut"));
+      ledcWrite(LED_PIN, 255);              // écran allumé pendant l'OTA
+      g_screenOn = true;
+      tft.fillScreen(TFT_BLACK);
+      tft.setFreeFont(&FreeSansBold9pt7b);
+      tft.setTextSize(1);
+      tft.setTextColor(TFT_CYAN, TFT_BLACK);
+      tft.setTextDatum(TC_DATUM);
+      tft.drawString("OTA UPDATE", 160, 80);
+      tft.setTextDatum(TL_DATUM);
+      tft.fillRect(4, 130, 312, 20, TFT_DARKGREY);  // fond barre de progression
+    });
+
+    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+      esp_task_wdt_reset();
+      int w = (int)(312UL * progress / total);
+      tft.fillRect(4,     130, w,       20, TFT_CYAN);
+      tft.fillRect(4 + w, 130, 312 - w, 20, TFT_DARKGREY);
+      tft.setTextFont(2); tft.setTextSize(1);
+      tft.setTextColor(TFT_WHITE, TFT_BLACK);
+      char pctBuf[8]; snprintf(pctBuf, sizeof(pctBuf), "%3d%%", (int)(progress * 100UL / total));
+      tft.setCursor(140, 160); tft.print(pctBuf);
+    });
+
+    ArduinoOTA.onEnd([]() {
+      Serial.println(F("\nOTA : termine — reboot"));
+      tft.setFreeFont(&FreeSansBold9pt7b);
+      tft.setTextSize(1);
+      tft.setTextColor(TFT_GREEN, TFT_BLACK);
+      tft.setTextDatum(TC_DATUM);
+      tft.drawString("OK — Reboot...", 160, 190);
+      tft.setTextDatum(TL_DATUM);
+    });
+
+    ArduinoOTA.onError([](ota_error_t error) {
+      char errBuf[24]; snprintf(errBuf, sizeof(errBuf), "OTA erreur [%u]", error);
+      Serial.println(errBuf);
+      tft.setFreeFont(&FreeSansBold9pt7b);
+      tft.setTextSize(1);
+      tft.setTextColor(TFT_RED, TFT_BLACK);
+      tft.setTextDatum(TC_DATUM);
+      tft.drawString("OTA ERREUR !", 160, 190);
+      tft.setTextDatum(TL_DATUM);
+    });
+
+    ArduinoOTA.begin();
+    splashLog("  OTA OK  (pool-data)", TFT_GREEN);
+  }
+
   delay(2000);
 
   // ── Vue principale ──
@@ -939,6 +997,7 @@ void setup() {
 // ─────────────────────────────────────────────────────────────
 void loop() {
   esp_task_wdt_reset();
+  ArduinoOTA.handle();
   unsigned long now = millis();
 
   // ── Monitoring WiFi ──────────────────────────────────────

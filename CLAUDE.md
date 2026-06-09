@@ -8,7 +8,7 @@ Sketch ESP32 D1 Mini : acquisition capteurs BME280 + DS18B20 + affichage TFT ILI
 
 ## Version courante
 
-`v1.1` — définie par `#define FW_VERSION "v1.1"` en tête du `.ino`. Voir `CHANGELOG.md`.
+`v1.2` — définie par `#define FW_VERSION "v1.2"` en tête du `.ino`. Voir `CHANGELOG.md`.
 
 ## Composants
 

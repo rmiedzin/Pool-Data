@@ -4,6 +4,23 @@ Toutes les modifications notables sont documentées ici.
 
 ---
 
+## [v1.2] — 2026-06-09 — ArduinoOTA + renommage Pool Data
+
+### Ajouté
+- **ArduinoOTA** : mise à jour firmware par WiFi sans câble USB
+  - Hostname `pool-data` (visible dans Arduino IDE → Outils → Port → Ports réseau)
+  - Écran OTA dédié : barre de progression cyan, pourcentage, message fin/erreur
+  - `esp_task_wdt_reset()` dans `onProgress` → watchdog 30 s maintenu pendant le flash
+  - Rétroéclairage forcé ON au démarrage de l'OTA (même si écran était éteint)
+  - `ArduinoOTA.handle()` appelé à chaque itération du `loop()`
+
+### Modifié
+- **Renommage** : `Pool-Local` → `Pool Data` (dossier, `.ino`, commentaires, Serial, splash TFT)
+- **Dépôt GitHub** : `rmiedzin/Pool-Local` → `rmiedzin/Pool-Data`
+- **Page INFOS SYSTEME** ligne ThingSpeak : `KO` → `Failed`, suppression compteur `#entrée`
+
+---
+
 ## [v1.1] — 2026-06-09 — UI debug dynamique + typographie + alignements
 
 ### Ajouté
