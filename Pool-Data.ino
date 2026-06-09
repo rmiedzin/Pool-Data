@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════
-//  Pool-Local — ESP32 D1 Mini
+//  Pool Data — ESP32 D1 Mini
 //  v1.0 — Touch + 4 vues + rétroéclairage PWM
 //  Voir CHANGELOG.md pour l'historique
 // ═══════════════════════════════════════════════════════════
@@ -660,15 +660,13 @@ void drawViewDebug() {
     y += dy;
   }
 
-  // ── 10. ThingSpeak ── col1=x4  col2=x120  col3=x200  col4=x262
+  // ── 10. ThingSpeak ── col1=x4  col2=x120  col3=x200
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.setCursor(4,   y); tft.print("ThingSpeak");
   tft.setCursor(120, y); tft.print("OK : ");
-  snprintf(buf, sizeof(buf), "%-5lu", (unsigned long)g_tsSentOK);   tft.print(buf);
-  tft.setCursor(200, y); tft.print("KO : ");
+  snprintf(buf, sizeof(buf), "%-5lu", (unsigned long)g_tsSentOK);    tft.print(buf);
+  tft.setCursor(200, y); tft.print("Failed : ");
   snprintf(buf, sizeof(buf), "%-5lu", (unsigned long)g_tsFailCount); tft.print(buf);
-  tft.setCursor(262, y); tft.print("#");
-  snprintf(buf, sizeof(buf), "%-5lu", (unsigned long)g_lastTsEntry); tft.print(buf);
   y += dy;
 
   // ── 11. Last TS + Next TS ── col1=x4  col2=x160
@@ -745,15 +743,13 @@ void refreshDebugVolatile() {
     snprintf(buf, sizeof(buf), "Heap : %lukB   ", (unsigned long)ESP.getFreeHeap()/1024); tft.print(buf);
   }
 
-  // ── Ligne 10 : ThingSpeak ── col1=x4  col2=x120  col3=x200  col4=x262
+  // ── Ligne 10 : ThingSpeak ── col1=x4  col2=x120  col3=x200
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.setCursor(4,   y10); tft.print("ThingSpeak");
   tft.setCursor(120, y10); tft.print("OK : ");
-  snprintf(buf, sizeof(buf), "%-5lu", (unsigned long)g_tsSentOK);   tft.print(buf);
-  tft.setCursor(200, y10); tft.print("KO : ");
-  snprintf(buf, sizeof(buf), "%-5lu", (unsigned long)g_tsFailCount); tft.print(buf);
-  tft.setCursor(262, y10); tft.print("#");
-  snprintf(buf, sizeof(buf), "%-5lu", (unsigned long)g_lastTsEntry); tft.print(buf);
+  snprintf(buf, sizeof(buf), "%-5lu", (unsigned long)g_tsSentOK);    tft.print(buf);
+  tft.setCursor(200, y10); tft.print("Failed : ");
+  snprintf(buf, sizeof(buf), "%-5lu  ", (unsigned long)g_tsFailCount); tft.print(buf);
 
   // ── Ligne 11 : Last TS + Next TS ── col1=x4  col2=x160
   {
@@ -795,7 +791,7 @@ void setup() {
   Serial.begin(115200);
   delay(1500);
   Serial.println(F("════════════════════════════════"));
-  Serial.println(F("  Pool-Local  D1 Mini ESP32"));
+  Serial.println(F("  Pool Data  D1 Mini ESP32"));
   Serial.print  (F("  Firmware : ")); Serial.println(F(FW_VERSION));
   Serial.print  (F("  Compile  : ")); Serial.println(F(__DATE__));
   Serial.println(F("════════════════════════════════"));
@@ -817,7 +813,7 @@ void setup() {
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.setTextSize(3);
   tft.setCursor(12, 8);
-  tft.print("Pool-Local");
+  tft.print("Pool Data");
   tft.setTextSize(1);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
   tft.setCursor(12, 50);

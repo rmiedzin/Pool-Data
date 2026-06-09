@@ -1,4 +1,4 @@
-# Changelog — Pool-Local
+# Changelog — Pool Data
 
 Toutes les modifications notables sont documentées ici.
 

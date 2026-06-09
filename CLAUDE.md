@@ -1,10 +1,10 @@
-# CLAUDE.md — Pool-Local
+# CLAUDE.md — Pool Data
 
 Ce fichier fournit le contexte à Claude Code pour ce projet.
 
 ## Vue d'ensemble
 
-Sketch ESP32 D1 Mini : acquisition capteurs BME280 + DS18B20 + affichage TFT ILI9341 2.4" tactile + WiFi + NTP + envoi ThingSpeak toutes les 5 min. Fichier unique : `Pool-Local.ino`.
+Sketch ESP32 D1 Mini : acquisition capteurs BME280 + DS18B20 + affichage TFT ILI9341 2.4" tactile + WiFi + NTP + envoi ThingSpeak toutes les 5 min. Fichier unique : `Pool-Data.ino`.
 
 ## Version courante
 
@@ -225,7 +225,7 @@ Fichier exclu du dépôt via `.gitignore` — **ne jamais committer**.
 
 ## Flash & debug
 
-1. Ouvrir `Pool-Local.ino` dans Arduino IDE 2.x
+1. Ouvrir `Pool-Data.ino` dans Arduino IDE 2.x
 2. Board auto-sélectionné via `sketch.yaml` (sinon : *ESP32 Dev Module*)
 3. Sélectionner le port COM/série
 4. **Verify** Ctrl+R — **Upload** Ctrl+U
