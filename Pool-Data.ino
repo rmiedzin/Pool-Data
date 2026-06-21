@@ -1,4 +1,4 @@
-// ═══════════════════════════════════════════════════════════
+tu peux vérifier qu'on avti bien mis// ═══════════════════════════════════════════════════════════
 //  Pool Data — ESP32 D1 Mini
 //  v1.0 — Touch + 4 vues + rétroéclairage PWM
 //  Voir CHANGELOG.md pour l'historique
@@ -95,6 +95,8 @@ uint32_t          g_readCount   = 0;
 uint32_t          g_tsSentOK    = 0;
 uint32_t          g_tsFailCount = 0;
 uint32_t          g_lastTsEntry = 0;
+uint32_t          g_dsReadOK    = 0;   // lectures DS18B20 valides
+uint32_t          g_dsReadErr   = 0;   // lectures DS18B20 invalides
 esp_reset_reason_t g_resetReason = ESP_RST_UNKNOWN;  // raison du dernier reboot
 
 // ── Layout pixels (paysage 320×240) ─────────────────────────
@@ -594,6 +596,9 @@ void drawViewDebug() {
   tft.setTextColor(g_bmeOK ? TFT_GREEN : TFT_RED, TFT_BLACK); tft.print(g_bmeOK ? "OK" : "ERR");
   tft.setTextColor(TFT_WHITE, TFT_BLACK); tft.setCursor(160, y); tft.print("DS18B20 : ");
   tft.setTextColor(g_dsOK  ? TFT_GREEN : TFT_RED, TFT_BLACK); tft.print(g_dsOK  ? "OK" : "ERR");
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  char dsBuf[12]; snprintf(dsBuf, sizeof(dsBuf), " %lu/%lu", g_dsReadOK, g_dsReadErr);
+  tft.print(dsBuf);
   tft.setTextColor(TFT_WHITE, TFT_BLACK); y += dy;
 
   // ── 3. IP ──
@@ -1062,7 +1067,8 @@ void loop() {
     { unsigned long cs = millis();
       while (!ds18b20.isConversionComplete() && millis() - cs < 1000) delay(5); }
     g_tempEau = ds18b20.getTempCByIndex(0);
-    g_dsOK    = (g_tempEau != DEVICE_DISCONNECTED_C);
+    g_dsOK    = (g_tempEau != DEVICE_DISCONNECTED_C) && !isnan(g_tempEau);
+    if (g_dsOK) g_dsReadOK++; else g_dsReadErr++;
 
     g_readCount++;
     addHistoryPoint(g_tempAir, g_tempEau);
