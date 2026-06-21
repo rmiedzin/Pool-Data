@@ -924,7 +924,7 @@ void setup() {
   if (g_wifiOK) {
     splashLog("> OTA init...");
     ArduinoOTA.setHostname("pool-data");
-    ArduinoOTA.setPassword("pooldata");
+    ArduinoOTA.setPassword(SECRET_OTA_PASSWORD);
 
     ArduinoOTA.onStart([]() {
       esp_task_wdt_reset();
