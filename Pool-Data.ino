@@ -1,4 +1,4 @@
-tu peux vérifier qu'on avti bien mis// ═══════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
 //  Pool Data — ESP32 D1 Mini
 //  v1.0 — Touch + 4 vues + rétroéclairage PWM
 //  Voir CHANGELOG.md pour l'historique
@@ -78,7 +78,7 @@ char  g_ipBuf[16] = "---";
 
 // ── Historique graphe ────────────────────────────────────────
 //   Buffer circulaire 138 points × 5 min = 11h30
-#define GRAPH_POINTS 138
+#define GRAPH_POINTS 576  // 48h × 12 pts/h
 float g_airHistory[GRAPH_POINTS];
 float g_eauHistory[GRAPH_POINTS];
 int   g_histCount = 0;
@@ -347,14 +347,15 @@ void drawGraph(int gY0 = GRAPH_Y0, int gY1 = GRAPH_Y1) {
   snprintf(lb, sizeof(lb), "%d", (int)vMin);
   tft.setCursor(2, gY1 - 8);  tft.print(lb);
 
-  // ── Tracé des courbes (2 px/point, ancré à droite) ──
-  const int step = 2;
+  // ── Tracé des courbes (step dynamique, ancré à droite) ──
+  float stepF = (g_histCount > 1) ? (float)GRAPH_W / (g_histCount - 1) : (float)GRAPH_W;
   for (int i = 1; i < g_histCount; i++) {
     int idx0 = (g_histHead - g_histCount + i - 1 + GRAPH_POINTS) % GRAPH_POINTS;
     int idx1 = (g_histHead - g_histCount + i     + GRAPH_POINTS) % GRAPH_POINTS;
 
-    int x1 = GRAPH_X1 - (g_histCount - 1 - i) * step;
-    int x0 = x1 - step;
+    int x0 = GRAPH_X0 + (int)((i - 1) * stepF);
+    int x1 = GRAPH_X0 + (int)(i       * stepF);
+    if (x1 == x0) x1 = x0 + 1;
     if (x0 < GRAPH_X0) x0 = GRAPH_X0;
     if (x1 > GRAPH_X1) x1 = GRAPH_X1;
 
@@ -377,17 +378,18 @@ void drawGraph(int gY0 = GRAPH_Y0, int gY1 = GRAPH_Y1) {
     struct tm ti;
     if (getLocalTime(&ti)) {
       int ptSinceHour = ti.tm_min / 5;
-      int xLastHour   = GRAPH_X1 - ptSinceHour * 2;
-      int xDataStart  = GRAPH_X1 - (g_histCount - 1) * 2;
+      int xLastHour   = GRAPH_X1 - (int)(ptSinceHour * stepF);
+      int xDataStart  = GRAPH_X1 - (int)((g_histCount - 1) * stepF);
+      int tickH       = (stepF * 12.f >= 16.f) ? 1 : 6;  // toutes les 1h ou 6h
 
       tft.setTextFont(1); tft.setTextSize(1);
-      for (int h = 0; h < 13; h++) {
-        int x = xLastHour - h * 24;
-        if (x > GRAPH_X1)       continue;
-        if (x < GRAPH_X0 + 8)   break;
-        if (x < xDataStart)     break;
+      for (int h = 0; h < 49; h += tickH) {
+        int x = xLastHour - (int)(h * 12 * stepF);
+        if (x > GRAPH_X1)     continue;
+        if (x < GRAPH_X0 + 8) break;
+        if (x < xDataStart)   break;
         tft.drawFastVLine(x, gY1 + 1, 3, TFT_DARKGREY);
-        int hour = (ti.tm_hour - h + 24) % 24;
+        int hour = ((ti.tm_hour - h) % 24 + 24) % 24;
         char lbl[5];
         snprintf(lbl, sizeof(lbl), "%dh", hour);
         int lw = (int)strlen(lbl) * 6;
@@ -922,7 +924,7 @@ void setup() {
   if (g_wifiOK) {
     splashLog("> OTA init...");
     ArduinoOTA.setHostname("pool-data");
-    // ArduinoOTA.setPassword("pooldata");   // décommenter pour protéger
+    ArduinoOTA.setPassword("pooldata");
 
     ArduinoOTA.onStart([]() {
       esp_task_wdt_reset();
