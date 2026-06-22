@@ -89,6 +89,8 @@ Fichier : `~/Documents/Arduino/libraries/TFT_eSPI/User_Setup.h`
 | `OneWire`                 | Bus OneWire DS18B20                |
 | `TFT_eSPI` (Bodmer)       | Affichage TFT ILI9341 + FreeFonts  |
 | `Wire`, `WiFi`, `time.h`  | I²C, WiFi, NTP — core ESP32        |
+| `ArduinoOTA`              | Mise à jour firmware par WiFi — core ESP32 |
+| `Preferences`             | Stockage NVS (stats min/max) — core ESP32  |
 | `esp_task_wdt`            | Watchdog — core ESP32              |
 | `HTTPClient`              | Envoi ThingSpeak — core ESP32      |
 
@@ -190,14 +192,17 @@ setup()
   ├── DS18B20 init + setWaitForConversion(false)
   ├── WiFi.begin() + boucle timeout 30 s
   ├── configTzTime() + boucle getLocalTime() 10 s
+  ├── ArduinoOTA.setHostname("pool-data") + setPassword() + onStart/onProgress/onEnd/onError + begin()
+  ├── loadStats() → NVS Preferences
   ├── drawCurrentView() → Vue 0 Main
   ├── esp_task_wdt_deinit() + esp_task_wdt_init(30s) + esp_task_wdt_add()
   └── lastTouchTime = millis()
 
 loop()  [~10 ms par itération]
   ├── esp_task_wdt_reset()
+  ├── ArduinoOTA.handle()
   ├── Monitoring WiFi (wifiOK → updateHeader si vue 0)
-  ├── Touch : front descendant GPIO13 → vue suivante / réveil écran
+  ├── Touch : 3 états (front desc/mont/maintenu) → vue suivante / réveil / reset stats
   ├── Auto-extinction : now - lastTouchTime >= SCREEN_TIMEOUT
   ├── refreshDebugVolatile() si vue 3 + écran ON + elapsed >= 1000 ms
   ├── toutes les 5 min :
@@ -226,18 +231,59 @@ loop()  [~10 ms par itération]
 
 ```cpp
 #pragma once
-#define SECRET_SSID       "nom_wifi"
-#define SECRET_PASSWORD   "mot_de_passe"
-#define SECRET_API_KEY    "CLE_THINGSPEAK"
-#define SECRET_CHANNEL_ID 467925
+#define SECRET_SSID         "nom_wifi"
+#define SECRET_PASSWORD     "mot_de_passe"
+#define SECRET_OTA_PASSWORD "mot_de_passe_ota"
+#define SECRET_API_KEY      "CLE_THINGSPEAK"
+#define SECRET_CHANNEL_ID   467925
 ```
 
-Fichier exclu du dépôt via `.gitignore` — **ne jamais committer**.
+Fichier exclu du dépôt via `.gitignore` — **ne jamais committer**. Le dépôt GitHub est **public**.
+
+## ArduinoOTA — mise à jour firmware par WiFi
+
+### Configuration dans le code
+
+```cpp
+ArduinoOTA.setHostname("pool-data");
+ArduinoOTA.setPassword(SECRET_OTA_PASSWORD);  // dans secrets.h
+ArduinoOTA.handle();  // appelé à chaque itération de loop()
+esp_task_wdt_reset(); // dans onProgress → watchdog maintenu pendant le flash
+```
+
+### Procédure upload OTA
+
+1. S'assurer que le Mac et l'ESP32 sont sur le **même sous-réseau** (même SSID ou sous-réseau bridgé)
+2. Dans Arduino IDE : **Outils → Port → Ports réseau → pool-data at 192.168.x.x**
+3. Si le port n'apparaît pas : vérifier *Réglages Système → Confidentialité et sécurité → Réseau local → Arduino IDE → ON*
+4. Renseigner le mot de passe OTA dans la boîte de dialogue (valeur de `SECRET_OTA_PASSWORD`)
+5. **Upload** Ctrl+U — barre de progression cyan sur le TFT, puis reboot automatique
+
+> Le champ password ne peut pas être vide dans Arduino IDE 2.x (bouton Upload grisé).
+
+### Ecran OTA pendant le flash
+
+Le sketch affiche une vue dédiée pendant l'OTA :
+- Barre de progression cyan + pourcentage
+- Message "OTA OK — Reboot..." ou "OTA Erreur : <code>" en fin de flash
+- Rétroéclairage forcé ON (même si l'écran était éteint)
+
+### Précautions
+
+- **Toujours flasher en USB au moins une fois** après un changement de code OTA (ex. nouveau mot de passe, changement hostname) — l'OTA ne peut pas se mettre à jour elle-même à chaud
+- Si l'OTA échoue en cours de flash, l'ESP32 reste sur l'ancien firmware (rollback automatique)
+- Le watchdog 30 s est maintenu via `esp_task_wdt_reset()` dans `onProgress` — pas de reboot intempestif pendant un flash lent
 
 ## Flash & debug
 
+### USB (première fois ou si OTA inaccessible)
+
 1. Ouvrir `Pool-Data.ino` dans Arduino IDE 2.x
-2. Board auto-sélectionné via `sketch.yaml` (sinon : *ESP32 Dev Module*)
+2. Board auto-sélectionné via `sketch.yaml` (sinon : *ESP32 Dev Module*, partition *min_spiffs*)
 3. Sélectionner le port COM/série
 4. **Verify** Ctrl+R — **Upload** Ctrl+U
 5. Serial Monitor à **115200 baud**
+
+### OTA (mises à jour courantes)
+
+Voir section ArduinoOTA ci-dessus.
