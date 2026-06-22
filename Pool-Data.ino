@@ -856,7 +856,7 @@ void drawViewStats() {
   tft.fillRect(0, 0, 320, Y_HDR, TFT_NAVY);
   tft.setFreeFont(&FreeSansBold9pt7b); tft.setTextSize(1);
   tft.setTextColor(TFT_WHITE, TFT_NAVY);
-  tft.setTextDatum(TC_DATUM); tft.drawString("STATISTIQUES  " FW_VERSION, 160, 12); tft.setTextDatum(TL_DATUM);
+  tft.setTextDatum(TC_DATUM); tft.drawString("STATISTIQUES", 160, 12); tft.setTextDatum(TL_DATUM);
   tft.drawFastHLine(0, Y_HDR, 320, TFT_DARKGREY);
 
   tft.setTextFont(2); tft.setTextSize(1);
