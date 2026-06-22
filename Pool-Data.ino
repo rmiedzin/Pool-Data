@@ -2,7 +2,7 @@
 //  Pool Data — ESP32 D1 Mini
 //  Voir CHANGELOG.md pour l'historique complet
 // ═══════════════════════════════════════════════════════════
-#define FW_VERSION "v1.3"
+#define FW_VERSION "v1.4"
 
 #ifndef ARDUINO_ARCH_ESP32
   #error "Board incorrect — sélectionner : Tools > Board > ESP32 Dev Module"
@@ -106,6 +106,8 @@ char  g_eauMaxTs[14] = "--/-- --:--";
 char  g_airMinTs[14] = "--/-- --:--";
 char  g_airMaxTs[14] = "--/-- --:--";
 esp_reset_reason_t g_resetReason = ESP_RST_UNKNOWN;  // raison du dernier reboot
+bool          g_screensaverOn  = false;              // économiseur actif
+unsigned long g_saverRefresh   = 0;                  // dernier redraw économiseur
 
 // ── Layout pixels (paysage 320×240) ─────────────────────────
 //
@@ -113,9 +115,9 @@ esp_reset_reason_t g_resetReason = ESP_RST_UNKNOWN;  // raison du dernier reboot
 //  y=0    ┌──────────────────────────────────────────────────────┐
 //         │ POOL DATA               14:32    [WiFi bars]         │
 //  y=42   ├──────────────────────────────────────────────────────┤
-//         │  🌡 (thermo)    26.3°C  (Bold24pt)                  │  zone Air  (99px)
+//         │  🌡 (thermo)    26.3°C  (Bold24pt)                   │  zone Air  (99px)
 //  y=141  ├──────────────────────────────────────────────────────┤
-//         │  💧 (goutte)    24.1°C  (Bold24pt)                  │  zone Eau  (99px)
+//         │  💧 (goutte)    24.1°C  (Bold24pt)                   │  zone Eau  (99px)
 //  y=240  └──────────────────────────────────────────────────────┘
 //
 //  Zone Air baseline : y=102  (texte y=67..114, marge 26px)
@@ -477,6 +479,77 @@ void updateHeader() {
 
 
 // ─────────────────────────────────────────────────────────────
+// Flèche tendance T° eau (zone droite de la zone Eau)
+// ─────────────────────────────────────────────────────────────
+void drawTrendArrow(float trend) {
+  const int ax = 284, ay = 162, aw = 22, ah = 30;
+  tft.fillRect(ax, ay, aw, ah, TFT_BLACK);
+  if (isnan(trend)) return;
+  uint16_t col = (trend > 0.3f) ? TFT_RED : (trend < -0.3f) ? TFT_CYAN : TFT_GREEN;
+  int cx = ax + aw / 2;                       // 295
+  if (trend > 0.3f) {                         // ↑ hausse
+    tft.fillTriangle(cx, ay, cx - 9, ay + 13, cx + 9, ay + 13, col);
+    tft.fillRect(cx - 4, ay + 13, 8, 17, col);
+  } else if (trend < -0.3f) {                 // ↓ baisse
+    tft.fillRect(cx - 4, ay, 8, 17, col);
+    tft.fillTriangle(cx, ay + ah, cx - 9, ay + 17, cx + 9, ay + 17, col);
+  } else {                                    // → stable
+    int my = ay + ah / 2;
+    tft.fillRect(ax, my - 3, 14, 6, col);
+    tft.fillTriangle(ax + 13, my - 7, ax + 13, my + 7, ax + aw, my, col);
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// Économiseur d'écran — T° eau + heure, luminosité réduite
+// ─────────────────────────────────────────────────────────────
+void drawScreensaver() {
+  tft.fillScreen(TFT_BLACK);
+  // T° eau centrée
+  {
+    char buf[10];
+    if (g_dsOK && g_tempEau > -100.f) snprintf(buf, sizeof(buf), "%.1fC", g_tempEau);
+    else strcpy(buf, "--.-C");
+    tft.setFreeFont(&FreeSansBold18pt7b); tft.setTextSize(2);
+    int w = tft.textWidth(buf);
+    tft.setTextColor(g_dsOK ? TFT_CYAN : TFT_DARKGREY, TFT_BLACK);
+    tft.setCursor(160 - w / 2, 115);
+    tft.print(buf);
+    tft.setTextSize(1);
+  }
+  // Heure
+  {
+    char buf[6] = "--:--";
+    if (g_ntpOK) { struct tm ti; getLocalTime(&ti); strftime(buf, sizeof(buf), "%H:%M", &ti); }
+    tft.setFreeFont(&FreeSansBold9pt7b);
+    int w = tft.textWidth(buf);
+    tft.setTextColor(0x4208, TFT_BLACK);
+    tft.setCursor(160 - w / 2, 178);
+    tft.print(buf);
+    tft.setTextFont(1);
+  }
+}
+
+void enterScreensaver() {
+  g_screenOn      = false;
+  g_screensaverOn = true;
+  ledcWrite(LED_PIN, 18);   // ~7% luminosité
+  drawScreensaver();
+  g_saverRefresh = millis();
+  Serial.println(F("Economiseur actif"));
+}
+
+void wakeFromScreensaver() {
+  g_screensaverOn = false;
+  g_screenOn      = true;
+  ledcWrite(LED_PIN, 255);
+  lastTouchTime   = millis();
+  drawCurrentView();
+}
+
+
+// ─────────────────────────────────────────────────────────────
 // ── VUE 0 — Principal : icônes + 2 températures ─────────────
 // ─────────────────────────────────────────────────────────────
 void drawViewMain() {
@@ -494,6 +567,7 @@ void drawViewMain() {
   // Zone Eau (y=141..240, centre y=190) — icône 38×64px, centrage iy=158
   drawIconDrop(14, 158, TFT_CYAN);
   drawTempZone(g_tempEau, true, TFT_CYAN, 207);
+  drawTrendArrow(computeEauTrend());
   // Header dynamique (heure + WiFi)
   updateHeader();
 }
@@ -1174,31 +1248,46 @@ void loop() {
     if (g_view == 0 && g_screenOn) updateHeader();
   }
 
-  // ── Touch detection (court = vue suivante, long sur vue 4 = reset stats) ──
-  static bool          lastIRQ       = HIGH;
-  static unsigned long touchStartMs  = 0;
-  static bool          longPressDone = false;
+  // ── Touch detection ─────────────────────────────────────────
+  //   court (< 1500 ms)  : vue suivante
+  //   double tap (< 400 ms entre deux taps) : retour vue 0
+  //   long (>= 1500 ms, vue 4) : reset stats
+  //   n'importe quel tap sur économiseur : réveil
+  static bool          lastIRQ        = HIGH;
+  static unsigned long touchStartMs   = 0;
+  static bool          longPressDone  = false;
+  static unsigned long lastTapRelease = 0;    // horodatage dernier tap court (double tap)
   bool irqNow = digitalRead(TOUCH_IRQ);
 
   if (lastIRQ == HIGH && irqNow == LOW) {          // front descendant = début toucher
     if (now - touchStartMs >= 250) {               // anti-rebond
-      touchStartMs  = now;
-      longPressDone = false;
-      if (!g_screenOn) { screenOn(); drawCurrentView(); }  // réveil immédiat
+      touchStartMs  = now; longPressDone = false;
+      if (g_screensaverOn) {
+        wakeFromScreensaver();
+        longPressDone = true;                      // évite changement de vue au lâcher
+      } else if (!g_screenOn) {
+        screenOn(); drawCurrentView();
+        longPressDone = true;
+      }
     }
   }
 
   if (lastIRQ == LOW && irqNow == HIGH) {          // front montant = fin toucher
     unsigned long held = now - touchStartMs;
-    if (g_screenOn && !longPressDone && held >= 30 && held < 1500) {
-      g_view = (g_view + 1) % VIEW_COUNT;
-      screenOn();
-      drawCurrentView();
+    if (g_screenOn && !g_screensaverOn && !longPressDone && held >= 30 && held < 1500) {
+      if (now - lastTapRelease < 400) {            // double tap → vue 0
+        g_view = 0; screenOn(); drawCurrentView();
+        lastTapRelease = 0;
+      } else {                                     // tap simple → vue suivante
+        g_view = (g_view + 1) % VIEW_COUNT;
+        screenOn(); drawCurrentView();
+        lastTapRelease = now;
+      }
     }
     touchStartMs = 0; longPressDone = false;
   }
 
-  if (irqNow == LOW && touchStartMs > 0 && !longPressDone && g_screenOn) {
+  if (irqNow == LOW && touchStartMs > 0 && !longPressDone && g_screenOn && !g_screensaverOn) {
     if (now - touchStartMs >= 1500 && g_view == 4) {
       longPressDone = true;
       screenOn();
@@ -1216,10 +1305,14 @@ void loop() {
 
   lastIRQ = irqNow;
 
-  // ── Auto-extinction écran ────────────────────────────────
-  if (g_screenOn && (now - lastTouchTime >= SCREEN_TIMEOUT)) {
-    screenOff();
-    Serial.println(F("Ecran OFF (timeout 5 min)"));
+  // ── Économiseur d'écran après SCREEN_TIMEOUT ────────────
+  if (g_screenOn && !g_screensaverOn && (now - lastTouchTime >= SCREEN_TIMEOUT)) {
+    enterScreensaver();
+  }
+  // Refresh économiseur toutes les 30 s (mise à jour heure)
+  if (g_screensaverOn && (now - g_saverRefresh >= 30000)) {
+    drawScreensaver();
+    g_saverRefresh = now;
   }
 
   // ── Refresh sélectif page debug toutes les 1 s ──
@@ -1255,8 +1348,9 @@ void loop() {
     addHistoryPoint(g_tempAir, g_tempEau);
     updateStats(g_tempEau, g_tempAir);
 
-    // Redessine la vue courante uniquement si l'écran est allumé
-    if (g_screenOn) drawCurrentView();
+    // Redessine la vue courante ou rafraîchit l'économiseur
+    if (g_screenOn)      drawCurrentView();
+    else if (g_screensaverOn) { drawScreensaver(); g_saverRefresh = now; }
 
     serialTimestamp();
     Serial.print(F("Air:")); Serial.print(g_tempAir, 1); Serial.print(F("C  "));

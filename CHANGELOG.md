@@ -4,6 +4,22 @@ Toutes les modifications notables sont documentées ici.
 
 ---
 
+## [v1.4] — 2026-06-22 — Flèche tendance + économiseur + double tap
+
+### Ajouté
+- **Flèche tendance T° eau** (vue Main, zone droite) : ↑ rouge (hausse > 0.3°C/h), ↓ cyan (baisse), → vert (stable). Utilise `computeEauTrend()` déjà existant
+- **Économiseur d'écran** : remplace l'extinction complète. Après 5 min → affiche T° eau + heure à 7% luminosité. Refresh toutes les 30 s. N'importe quel tap réveille l'écran
+- **Double tap → retour vue 0** : deux taps en moins de 400 ms ramènent directement à la vue Main. Un seul tap = vue suivante (comportement inchangé)
+
+### Modifié
+- **Touch handler** : ajout état `g_screensaverOn` + `lastTapRelease` pour double tap
+- **`wakeFromScreensaver()`** : restaure luminosité 100% + redessine vue courante
+- **`enterScreensaver()`** : remplace `screenOff()` dans le timer SCREEN_TIMEOUT
+- Mise à jour économiseur sur nouvelles mesures capteurs (T° eau à jour)
+- **`FW_VERSION`** : `v1.3` → `v1.4`
+
+---
+
 ## [v1.3] — 2026-06-22 — Page STATISTIQUES + persistance NVS + appui long
 
 ### Ajouté
