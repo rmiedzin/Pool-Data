@@ -140,7 +140,9 @@ Vue 1 — HUM/PRESS
 Vue 2 — HISTORIQUE (Graphe)
   Header navy 42px : "HISTORIQUE" centré
   drawGraph(Y_HDR+6, 224) → 176 px de hauteur utile
-  Buffer circulaire 138 pts × 5 min = 11h30 — Air (vert) + Eau (cyan)
+  Buffer circulaire 576 pts × 5 min = 48h — Air (vert) + Eau (cyan)
+  Step dynamique : stepF = GRAPH_W / (histCount-1)
+  Repères horaires adaptatifs : toutes les 1h (stepF×12 ≥ 16px) ou 6h
   Légende intégrée en haut-droite du graphe
 
 Vue 3 — INFOS SYSTEME (Debug)
@@ -171,7 +173,7 @@ Vue 4 — STATISTIQUES
  7  Air : 25.3C          Eau : 25.3C
  8  Hum : 65.2%          P : 1013.5hPa
  9  Uptime : 0h02m       Heap : 182kB            ← volatile (1s)
-10  ThingSpeak    OK : 5    KO : 0    #12        ← volatile (1s)
+10  ThingSpeak    OK : 5    Failed : 0            ← volatile (1s)
 11  Last TS : 47s         Next TS : 253s         ← volatile (1s)
 12  Reset : PowerOn
 ```

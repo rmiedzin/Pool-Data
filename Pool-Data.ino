@@ -1,7 +1,6 @@
 // ═══════════════════════════════════════════════════════════
 //  Pool Data — ESP32 D1 Mini
-//  v1.0 — Touch + 4 vues + rétroéclairage PWM
-//  Voir CHANGELOG.md pour l'historique
+//  Voir CHANGELOG.md pour l'historique complet
 // ═══════════════════════════════════════════════════════════
 #define FW_VERSION "v1.3"
 
@@ -78,7 +77,7 @@ bool  g_ntpOK   = false;
 char  g_ipBuf[16] = "---";
 
 // ── Historique graphe ────────────────────────────────────────
-//   Buffer circulaire 138 points × 5 min = 11h30
+//   Buffer circulaire — step dynamique, ancré à droite
 #define GRAPH_POINTS 576  // 48h × 12 pts/h
 float g_airHistory[GRAPH_POINTS];
 float g_eauHistory[GRAPH_POINTS];
@@ -89,7 +88,7 @@ int   g_histHead  = 0;
 uint8_t       g_view        = 0;
 bool          g_screenOn    = true;
 unsigned long lastTouchTime      = 0;
-unsigned long g_debugLastRefresh = 0;   // Option C : refresh sélectif page debug
+unsigned long g_debugLastRefresh = 0;   // refresh sélectif page debug (toutes les 1 s)
 
 // ── Statistiques ─────────────────────────────────────────────
 uint32_t          g_readCount   = 0;
@@ -112,7 +111,7 @@ esp_reset_reason_t g_resetReason = ESP_RST_UNKNOWN;  // raison du dernier reboot
 //
 //  Vue 0 — Main :
 //  y=0    ┌──────────────────────────────────────────────────────┐
-//         │ POOL LOCAL              14:32    [WiFi bars]         │
+//         │ POOL DATA               14:32    [WiFi bars]         │
 //  y=42   ├──────────────────────────────────────────────────────┤
 //         │  🌡 (thermo)    26.3°C  (Bold24pt)                  │  zone Air  (99px)
 //  y=141  ├──────────────────────────────────────────────────────┤
@@ -517,7 +516,7 @@ void drawViewGraph() {
 
 
 // ─────────────────────────────────────────────────────────────
-// ── VUE 4 — Humidité / Pression ─────────────────────────────
+// ── VUE 1 — Humidité / Pression ─────────────────────────────
 // ─────────────────────────────────────────────────────────────
 void drawViewHumPress() {
   tft.fillScreen(TFT_BLACK);
@@ -580,7 +579,7 @@ static const char* resetStr(esp_reset_reason_t r) {
 
 
 // ─────────────────────────────────────────────────────────────
-// ── VUE 5 — Debug système ────────────────────────────────────
+// ── VUE 3 — Debug système ────────────────────────────────────
 // ─────────────────────────────────────────────────────────────
 void drawViewDebug() {
   tft.fillScreen(TFT_BLACK);
@@ -712,7 +711,7 @@ void drawViewDebug() {
 
 
 // ─────────────────────────────────────────────────────────────
-// Refresh sélectif page debug (Option C) — lignes 9-12 seulement
+// Refresh sélectif page debug — lignes volatiles seulement
 // ─────────────────────────────────────────────────────────────
 void refreshDebugVolatile() {
   tft.setTextFont(2); tft.setTextSize(1);
@@ -1223,7 +1222,7 @@ void loop() {
     Serial.println(F("Ecran OFF (timeout 5 min)"));
   }
 
-  // ── Refresh sélectif page debug toutes les 2 s (Option C) ──
+  // ── Refresh sélectif page debug toutes les 1 s ──
   if (g_screenOn && g_view == 3 && (now - g_debugLastRefresh >= 1000)) {
     refreshDebugVolatile();
   }
