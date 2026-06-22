@@ -4,6 +4,25 @@ Toutes les modifications notables sont documentées ici.
 
 ---
 
+## [v1.3] — 2026-06-22 — Page STATISTIQUES + persistance NVS + appui long
+
+### Ajouté
+- **Vue 4 — STATISTIQUES** : T° min/max Eau et Air avec horodatage (dd/mm HH:MM), écart Eau-Air, tendance 1h
+- **Persistance NVS** (`Preferences`, namespace `pool-s`) : min/max conservés après reboot
+- **`loadStats()` / `saveStats()` / `resetStats()`** : chargement au boot, sauvegarde à chaque nouveau record, reset complet NVS
+- **`updateStats(eau, air)`** : appelée après chaque mesure, met à jour les records et sauvegarde si changement
+- **`computeEauTrend()`** : tendance T° eau sur 1h (vNow − v1h sur buffer circulaire)
+- **Appui long (≥1500 ms) sur vue 4** : réinitialise les stats avec message de confirmation rouge 1,5 s
+- **`VIEW_COUNT` = 5** (ajout de la vue Stats)
+- **Graphe 48h** : `GRAPH_POINTS = 576`, step dynamique (`float stepF = GRAPH_W / (g_histCount-1)`), repères horaires adaptatifs
+
+### Modifié
+- **Touch handler** : 3 états (front descendant, front montant, maintenu) — court < 1500 ms = vue suivante, long ≥ 1500 ms sur vue 4 = reset stats
+- **CLAUDE.md** : version et vues mises à jour
+- **`FW_VERSION`** : `v1.2` → `v1.3`
+
+---
+
 ## [v1.2] — 2026-06-09 — ArduinoOTA + renommage Pool Data
 
 ### Ajouté

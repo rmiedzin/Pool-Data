@@ -8,7 +8,7 @@ Sketch ESP32 D1 Mini : acquisition capteurs BME280 + DS18B20 + affichage TFT ILI
 
 ## Version courante
 
-`v1.2` — définie par `#define FW_VERSION "v1.2"` en tête du `.ino`. Voir `CHANGELOG.md`.
+`v1.3` — définie par `#define FW_VERSION "v1.3"` en tête du `.ino`. Voir `CHANGELOG.md`.
 
 ## Composants
 
@@ -107,7 +107,8 @@ Board : **ESP32 Dev Module** via `sketch.yaml`.
 | `LED_PIN`           | 19            | GPIO rétroéclairage TFT (PWM)       |
 | `TOUCH_IRQ`         | 13            | GPIO T_IRQ tactile (actif LOW)      |
 | `Y_HDR`             | 42            | Hauteur uniforme du header (toutes vues) |
-| `VIEW_COUNT`        | 4             | Nombre de vues                      |
+| `VIEW_COUNT`        | 5             | Nombre de vues                      |
+| `GRAPH_POINTS`      | 576           | Buffer historique (48h × 12 pts/h)  |
 | Watchdog            | 30 000 ms     | Reboot si `loop()` bloqué           |
 
 ## ThingSpeak — champs envoyés
@@ -120,7 +121,7 @@ Board : **ESP32 Dev Module** via `sketch.yaml`.
 | `field4` | Pression (BME280)         | hPa   |
 | `field5` | RSSI WiFi                 | dBm   |
 
-## Architecture — 4 vues (touch pour avancer)
+## Architecture — 5 vues (touch court = suivante, appui long sur vue 4 = reset stats)
 
 ```
 Vue 0 — POOL DATA (Main)
@@ -141,9 +142,19 @@ Vue 2 — HISTORIQUE (Graphe)
   Légende intégrée en haut-droite du graphe
 
 Vue 3 — INFOS SYSTEME (Debug)
-  Header navy 42px : "INFOS SYSTEME  v1.1" centré
+  Header navy 42px : "INFOS SYSTEME  v1.3" centré
   12 lignes Font2, dy=16, y=44..236
   Lignes 1,6,9,10,11 rafraîchies toutes les 1 s (refreshDebugVolatile)
+
+Vue 4 — STATISTIQUES
+  Header navy 42px : "STATISTIQUES  v1.3" centré
+  T° eau min/max + horodatage (dd/mm HH:MM)
+  T° air min/max + horodatage
+  Écart Eau-Air (magenta/cyan selon signe)
+  Tendance 1h (hausse/stable/baisse, couleur)
+  Bouton arrondi bas : "Maintenir appuye pour reinitialiser"
+  Appui long ≥1500 ms → resetStats() + confirmation rouge 1,5 s
+  Persistance NVS (namespace "pool-s", Preferences)
 ```
 
 ## Page INFOS SYSTEME — layout 12 lignes

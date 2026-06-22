@@ -3,7 +3,7 @@
 //  v1.0 — Touch + 4 vues + rétroéclairage PWM
 //  Voir CHANGELOG.md pour l'historique
 // ═══════════════════════════════════════════════════════════
-#define FW_VERSION "v1.2"
+#define FW_VERSION "v1.3"
 
 #ifndef ARDUINO_ARCH_ESP32
   #error "Board incorrect — sélectionner : Tools > Board > ESP32 Dev Module"
@@ -20,6 +20,7 @@
 #include <esp_task_wdt.h>
 #include <esp_system.h>   // esp_reset_reason()
 #include <ArduinoOTA.h>
+#include <Preferences.h>
 #include "secrets.h"
 
 // ── WiFi / NTP ──────────────────────────────────────────────
@@ -58,7 +59,7 @@ TFT_eSPI tft = TFT_eSPI();
 #define LED_PIN         19        // GPIO → LED backlight (PWM)
 #define TOUCH_IRQ       13        // GPIO ← T_IRQ du TFT (actif LOW)
 #define SCREEN_TIMEOUT  300000UL  // 5 min sans touch → écran OFF
-#define VIEW_COUNT        4
+#define VIEW_COUNT        5
 
 // ── Timers ───────────────────────────────────────────────────
 const unsigned long READ_INTERVAL = 300000UL;  // 5 min
@@ -97,6 +98,14 @@ uint32_t          g_tsFailCount = 0;
 uint32_t          g_lastTsEntry = 0;
 uint32_t          g_dsReadOK    = 0;   // lectures DS18B20 valides
 uint32_t          g_dsReadErr   = 0;   // lectures DS18B20 invalides
+
+// ── Statistiques T° persistantes (NVS) ──────────────────────
+float g_eauMin = 999.f,  g_eauMax = -999.f;
+float g_airMin = 999.f,  g_airMax = -999.f;
+char  g_eauMinTs[14] = "--/-- --:--";
+char  g_eauMaxTs[14] = "--/-- --:--";
+char  g_airMinTs[14] = "--/-- --:--";
+char  g_airMaxTs[14] = "--/-- --:--";
 esp_reset_reason_t g_resetReason = ESP_RST_UNKNOWN;  // raison du dernier reboot
 
 // ── Layout pixels (paysage 320×240) ─────────────────────────
@@ -782,12 +791,160 @@ void refreshDebugVolatile() {
 // ─────────────────────────────────────────────────────────────
 // Dispatcher — dessine la vue courante
 // ─────────────────────────────────────────────────────────────
+// Statistiques T° — NVS
+// ─────────────────────────────────────────────────────────────
+void loadStats() {
+  Preferences p; p.begin("pool-s", true);
+  g_eauMin = p.getFloat("eau_min", 999.f);
+  g_eauMax = p.getFloat("eau_max", -999.f);
+  g_airMin = p.getFloat("air_min", 999.f);
+  g_airMax = p.getFloat("air_max", -999.f);
+  if (p.isKey("eau_min_ts")) p.getString("eau_min_ts", g_eauMinTs, sizeof(g_eauMinTs));
+  if (p.isKey("eau_max_ts")) p.getString("eau_max_ts", g_eauMaxTs, sizeof(g_eauMaxTs));
+  if (p.isKey("air_min_ts")) p.getString("air_min_ts", g_airMinTs, sizeof(g_airMinTs));
+  if (p.isKey("air_max_ts")) p.getString("air_max_ts", g_airMaxTs, sizeof(g_airMaxTs));
+  p.end();
+}
+
+void saveStats() {
+  Preferences p; p.begin("pool-s", false);
+  p.putFloat("eau_min", g_eauMin); p.putFloat("eau_max", g_eauMax);
+  p.putFloat("air_min", g_airMin); p.putFloat("air_max", g_airMax);
+  p.putString("eau_min_ts", g_eauMinTs); p.putString("eau_max_ts", g_eauMaxTs);
+  p.putString("air_min_ts", g_airMinTs); p.putString("air_max_ts", g_airMaxTs);
+  p.end();
+}
+
+void resetStats() {
+  g_eauMin = 999.f; g_eauMax = -999.f;
+  g_airMin = 999.f; g_airMax = -999.f;
+  strcpy(g_eauMinTs, "--/-- --:--"); strcpy(g_eauMaxTs, "--/-- --:--");
+  strcpy(g_airMinTs, "--/-- --:--"); strcpy(g_airMaxTs, "--/-- --:--");
+  Preferences p; p.begin("pool-s", false); p.clear(); p.end();
+}
+
+void updateStats(float eau, float air) {
+  bool changed = false;
+  char ts[14];
+  if (g_ntpOK) { struct tm ti; getLocalTime(&ti); strftime(ts, sizeof(ts), "%d/%m %H:%M", &ti); }
+  else strcpy(ts, "--/-- --:--");
+  if (!isnan(eau) && eau > -100.f) {
+    if (eau < g_eauMin) { g_eauMin = eau; strlcpy(g_eauMinTs, ts, sizeof(g_eauMinTs)); changed = true; }
+    if (eau > g_eauMax) { g_eauMax = eau; strlcpy(g_eauMaxTs, ts, sizeof(g_eauMaxTs)); changed = true; }
+  }
+  if (!isnan(air)) {
+    if (air < g_airMin) { g_airMin = air; strlcpy(g_airMinTs, ts, sizeof(g_airMinTs)); changed = true; }
+    if (air > g_airMax) { g_airMax = air; strlcpy(g_airMaxTs, ts, sizeof(g_airMaxTs)); changed = true; }
+  }
+  if (changed) saveStats();
+}
+
+float computeEauTrend() {
+  if (g_histCount < 13) return NAN;
+  int idxNow = (g_histHead - 1  + GRAPH_POINTS) % GRAPH_POINTS;
+  int idx1h  = (g_histHead - 13 + GRAPH_POINTS) % GRAPH_POINTS;
+  float vNow = g_eauHistory[idxNow], v1h = g_eauHistory[idx1h];
+  if (vNow <= -100.f || v1h <= -100.f) return NAN;
+  return vNow - v1h;
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// ── VUE 4 — Statistiques T° ──────────────────────────────────
+// ─────────────────────────────────────────────────────────────
+void drawViewStats() {
+  tft.fillScreen(TFT_BLACK);
+  tft.fillRect(0, 0, 320, Y_HDR, TFT_NAVY);
+  tft.setFreeFont(&FreeSansBold9pt7b); tft.setTextSize(1);
+  tft.setTextColor(TFT_WHITE, TFT_NAVY);
+  tft.setTextDatum(TC_DATUM); tft.drawString("STATISTIQUES  " FW_VERSION, 160, 12); tft.setTextDatum(TL_DATUM);
+  tft.drawFastHLine(0, Y_HDR, 320, TFT_DARKGREY);
+
+  tft.setTextFont(2); tft.setTextSize(1);
+  const int dy = 16;
+  int y = Y_HDR + 2;
+  char buf[32];
+
+  // ── Eau ──
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  tft.setCursor(4, y); tft.print("TEMPERATURE EAU"); y += dy;
+
+  tft.setTextColor(TFT_WHITE, TFT_BLACK); tft.setCursor(4, y); tft.print("  Min : ");
+  if (g_eauMin < 900.f) {
+    tft.setTextColor(TFT_CYAN, TFT_BLACK);
+    snprintf(buf, sizeof(buf), "%.1fC", g_eauMin); tft.print(buf);
+    tft.setTextColor(TFT_DARKGREY, TFT_BLACK); tft.setCursor(160, y); tft.print(g_eauMinTs);
+  } else { tft.setTextColor(TFT_DARKGREY, TFT_BLACK); tft.print("--.--"); }
+  y += dy;
+
+  tft.setTextColor(TFT_WHITE, TFT_BLACK); tft.setCursor(4, y); tft.print("  Max : ");
+  if (g_eauMax > -900.f) {
+    tft.setTextColor(TFT_CYAN, TFT_BLACK);
+    snprintf(buf, sizeof(buf), "%.1fC", g_eauMax); tft.print(buf);
+    tft.setTextColor(TFT_DARKGREY, TFT_BLACK); tft.setCursor(160, y); tft.print(g_eauMaxTs);
+  } else { tft.setTextColor(TFT_DARKGREY, TFT_BLACK); tft.print("--.--"); }
+  y += dy;
+
+  // ── Air ──
+  tft.setTextColor(TFT_GREEN, TFT_BLACK);
+  tft.setCursor(4, y); tft.print("TEMPERATURE AIR"); y += dy;
+
+  tft.setTextColor(TFT_WHITE, TFT_BLACK); tft.setCursor(4, y); tft.print("  Min : ");
+  if (g_airMin < 900.f) {
+    tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    snprintf(buf, sizeof(buf), "%.1fC", g_airMin); tft.print(buf);
+    tft.setTextColor(TFT_DARKGREY, TFT_BLACK); tft.setCursor(160, y); tft.print(g_airMinTs);
+  } else { tft.setTextColor(TFT_DARKGREY, TFT_BLACK); tft.print("--.--"); }
+  y += dy;
+
+  tft.setTextColor(TFT_WHITE, TFT_BLACK); tft.setCursor(4, y); tft.print("  Max : ");
+  if (g_airMax > -900.f) {
+    tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    snprintf(buf, sizeof(buf), "%.1fC", g_airMax); tft.print(buf);
+    tft.setTextColor(TFT_DARKGREY, TFT_BLACK); tft.setCursor(160, y); tft.print(g_airMaxTs);
+  } else { tft.setTextColor(TFT_DARKGREY, TFT_BLACK); tft.print("--.--"); }
+  y += dy;
+
+  y += dy;  // ligne vide
+
+  // ── Ecart + Tendance ──
+  tft.setTextColor(TFT_WHITE, TFT_BLACK); tft.setCursor(4, y); tft.print("Ecart Eau-Air : ");
+  if (g_dsOK && !isnan(g_tempAir)) {
+    float delta = g_tempEau - g_tempAir;
+    tft.setTextColor(delta >= 0 ? TFT_MAGENTA : TFT_CYAN, TFT_BLACK);
+    snprintf(buf, sizeof(buf), "%+.1fC", delta); tft.print(buf);
+  } else { tft.setTextColor(TFT_DARKGREY, TFT_BLACK); tft.print("--.-"); }
+  y += dy;
+
+  float trend = computeEauTrend();
+  tft.setTextColor(TFT_WHITE, TFT_BLACK); tft.setCursor(4, y); tft.print("Tendance 1h   : ");
+  if (!isnan(trend)) {
+    uint16_t tc = trend > 0.2f ? TFT_RED : trend < -0.2f ? TFT_CYAN : TFT_GREEN;
+    const char* dir = trend > 0.2f ? "hausse" : trend < -0.2f ? "baisse" : "stable";
+    tft.setTextColor(tc, TFT_BLACK);
+    snprintf(buf, sizeof(buf), "%s (%+.1fC/h)", dir, trend); tft.print(buf);
+  } else { tft.setTextColor(TFT_DARKGREY, TFT_BLACK); tft.print("-- (< 1h)"); }
+  y += dy * 2;  // espace avant bouton
+
+  // ── Bouton reset ──
+  tft.fillRoundRect(4, y, 312, 18, 9, 0x2104);
+  tft.drawRoundRect(4, y, 312, 18, 9, TFT_DARKGREY);
+  tft.setTextColor(TFT_DARKGREY, 0x2104);
+  tft.setTextDatum(MC_DATUM);
+  tft.drawString("Maintenir appuye pour reinitialiser", 160, y + 9);
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextFont(1);
+}
+
+
+// ─────────────────────────────────────────────────────────────
 void drawCurrentView() {
   switch (g_view) {
     case 0: drawViewMain();     break;
     case 1: drawViewHumPress(); break;
     case 2: drawViewGraph();    break;
     case 3: drawViewDebug();    break;
+    case 4: drawViewStats();    break;
     default: g_view = 0; drawViewMain(); break;
   }
 }
@@ -979,6 +1136,9 @@ void setup() {
 
   delay(2000);
 
+  // ── Chargement stats NVS ──
+  loadStats();
+
   // ── Vue principale ──
   g_view = 0;
   drawCurrentView();
@@ -1015,26 +1175,46 @@ void loop() {
     if (g_view == 0 && g_screenOn) updateHeader();
   }
 
-  // ── Touch detection ──────────────────────────────────────
-  static bool     lastIRQ      = HIGH;
-  static unsigned long lastTouchMs = 0;
+  // ── Touch detection (court = vue suivante, long sur vue 4 = reset stats) ──
+  static bool          lastIRQ       = HIGH;
+  static unsigned long touchStartMs  = 0;
+  static bool          longPressDone = false;
   bool irqNow = digitalRead(TOUCH_IRQ);
 
-  if (lastIRQ == HIGH && irqNow == LOW) {     // front descendant = début du toucher
-    if (now - lastTouchMs >= 250) {            // anti-rebond 250 ms
-      lastTouchMs = now;
-      if (!g_screenOn) {
-        // Réveil : allume l'écran et rafraîchit la vue courante
-        screenOn();
-        drawCurrentView();
-      } else {
-        // Écran déjà allumé : passe à la vue suivante
-        g_view = (g_view + 1) % VIEW_COUNT;
-        screenOn();                             // remet le timer à zéro
-        drawCurrentView();
-      }
+  if (lastIRQ == HIGH && irqNow == LOW) {          // front descendant = début toucher
+    if (now - touchStartMs >= 250) {               // anti-rebond
+      touchStartMs  = now;
+      longPressDone = false;
+      if (!g_screenOn) { screenOn(); drawCurrentView(); }  // réveil immédiat
     }
   }
+
+  if (lastIRQ == LOW && irqNow == HIGH) {          // front montant = fin toucher
+    unsigned long held = now - touchStartMs;
+    if (g_screenOn && !longPressDone && held >= 30 && held < 1500) {
+      g_view = (g_view + 1) % VIEW_COUNT;
+      screenOn();
+      drawCurrentView();
+    }
+    touchStartMs = 0; longPressDone = false;
+  }
+
+  if (irqNow == LOW && touchStartMs > 0 && !longPressDone && g_screenOn) {
+    if (now - touchStartMs >= 1500 && g_view == 4) {
+      longPressDone = true;
+      screenOn();
+      resetStats();
+      tft.fillRect(4, Y_HDR + 50, 312, 80, TFT_BLACK);
+      tft.setFreeFont(&FreeSansBold9pt7b); tft.setTextSize(1);
+      tft.setTextColor(TFT_RED, TFT_BLACK);
+      tft.setTextDatum(MC_DATUM);
+      tft.drawString("Stats reinitialisees !", 160, Y_HDR + 90);
+      tft.setTextDatum(TL_DATUM); tft.setTextFont(1);
+      esp_task_wdt_reset(); delay(1500);
+      drawViewStats();
+    }
+  }
+
   lastIRQ = irqNow;
 
   // ── Auto-extinction écran ────────────────────────────────
@@ -1074,6 +1254,7 @@ void loop() {
 
     g_readCount++;
     addHistoryPoint(g_tempAir, g_tempEau);
+    updateStats(g_tempEau, g_tempAir);
 
     // Redessine la vue courante uniquement si l'écran est allumé
     if (g_screenOn) drawCurrentView();
