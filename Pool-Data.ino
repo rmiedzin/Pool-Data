@@ -1261,13 +1261,17 @@ void loop() {
 
   if (lastIRQ == HIGH && irqNow == LOW) {          // front descendant = début toucher
     if (now - touchStartMs >= 250) {               // anti-rebond
-      touchStartMs  = now; longPressDone = false;
+      touchStartMs = now; longPressDone = false;
       if (g_screensaverOn) {
         wakeFromScreensaver();
         longPressDone = true;                      // évite changement de vue au lâcher
       } else if (!g_screenOn) {
         screenOn(); drawCurrentView();
         longPressDone = true;
+      } else if (lastTapRelease > 0 && now - lastTapRelease < 500) {
+        // Double tap : 2e appui dans les 500 ms du lâcher précédent → vue 0
+        g_view = 0; screenOn(); drawCurrentView();
+        lastTapRelease = 0; longPressDone = true;
       }
     }
   }
@@ -1275,14 +1279,9 @@ void loop() {
   if (lastIRQ == LOW && irqNow == HIGH) {          // front montant = fin toucher
     unsigned long held = now - touchStartMs;
     if (g_screenOn && !g_screensaverOn && !longPressDone && held >= 30 && held < 1500) {
-      if (now - lastTapRelease < 400) {            // double tap → vue 0
-        g_view = 0; screenOn(); drawCurrentView();
-        lastTapRelease = 0;
-      } else {                                     // tap simple → vue suivante
-        g_view = (g_view + 1) % VIEW_COUNT;
-        screenOn(); drawCurrentView();
-        lastTapRelease = now;
-      }
+      g_view = (g_view + 1) % VIEW_COUNT;          // tap simple → vue suivante
+      screenOn(); drawCurrentView();
+      lastTapRelease = now;
     }
     touchStartMs = 0; longPressDone = false;
   }
