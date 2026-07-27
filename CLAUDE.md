@@ -8,7 +8,7 @@ Sketch ESP32 D1 Mini : acquisition capteurs BME280 + DS18B20 + affichage TFT ILI
 
 ## Version courante
 
-`v1.4` — définie par `#define FW_VERSION "v1.4"` en tête du `.ino`. Voir `CHANGELOG.md`.
+`v1.5` — définie par `#define FW_VERSION "v1.5"` en tête du `.ino`. Voir `CHANGELOG.md`.
 
 ## Composants
 
@@ -109,49 +109,64 @@ Board : **ESP32 Dev Module** via `sketch.yaml`.
 | `LED_PIN`           | 19            | GPIO rétroéclairage TFT (PWM)       |
 | `TOUCH_IRQ`         | 13            | GPIO T_IRQ tactile (actif LOW)      |
 | `Y_HDR`             | 42            | Hauteur uniforme du header (toutes vues) |
-| `VIEW_COUNT`        | 5             | Nombre de vues                      |
+| `VIEW_COUNT`        | 6             | Nombre de vues                      |
+| `WEATHER_CH`        | 434318        | Canal B ThingSpeak station météo ext.|
 | `GRAPH_POINTS`      | 576           | Buffer historique (48h × 12 pts/h)  |
 | Watchdog            | 30 000 ms     | Reboot si `loop()` bloqué           |
 
 ## ThingSpeak — champs envoyés
 
-| Field    | Donnée                    | Unité |
-|----------|---------------------------|-------|
-| `field1` | Température air (BME280)  | °C    |
-| `field2` | Température eau (DS18B20) | °C    |
-| `field3` | Humidité (BME280)         | %     |
-| `field4` | Pression (BME280)         | hPa   |
-| `field5` | RSSI WiFi                 | dBm   |
+| Field    | Donnée                             | Unité |
+|----------|------------------------------------|-------|
+| `field1` | Température air (BME280)           | °C    |
+| `field2` | Température eau (DS18B20)          | °C    |
+| `field3` | Humidité (BME280)                  | %     |
+| `field4` | Pression (BME280)                  | hPa   |
+| `field5` | RSSI WiFi pool house               | dBm   |
+| `field6` | Température ext. (station météo)   | °C    |
+| `field7` | Humidité ext. (station météo)      | %     |
+| `field8` | RSSI station météo                 | dBm   |
 
-## Architecture — 5 vues (touch court = suivante, appui long sur vue 4 = reset stats)
+field6/7/8 envoyés uniquement si `g_stationOK` (station hors ligne → champs absents de l'envoi).
+
+## Architecture — 6 vues (touch court = suivante, appui long sur vue 5 = reset stats)
 
 ```
 Vue 0 — POOL DATA (Main)
   Header navy 42px : "POOL DATA" | HH:MM | barres WiFi
-  Zone Air  (y=42..140) : icône thermomètre + température (FreeSansBold18pt×2)
-  Zone Eau  (y=141..240): icône goutte    + température (FreeSansBold18pt×2)
+  Zone T°Ext (y=42..140)  : icône thermomètre + T°Ext (orange, FreeSansBold18pt×2)
+  Zone T°Eau (y=141..240) : icône goutte      + T°Eau (cyan,   FreeSansBold18pt×2)
   updateHeader() : rafraîchit heure + barres WiFi toutes les 5 min
 
-Vue 1 — HUM/PRESS
-  Header navy 42px : centré (TC_DATUM)
-  Humidité (FreeSansBold24pt, TFT_YELLOW, centré)
-  Pression (FreeSansBold24pt, TFT_MAGENTA, centré)
+Vue 1 — POOL HOUSE
+  Header navy 42px : "POOL HOUSE" centré
+  "BME280 absent" si !g_bmeOK, sinon :
+  Zone T°Air (y=42..108)  : T°Air (vert)     FreeSansBold18pt — label "Air"
+  Zone Hum   (y=108..174) : Hum   (jaune)    FreeSansBold18pt — label "Hum"
+  Zone Press (y=174..240) : Press (magenta)  FreeSansBold18pt — label "Press"
 
-Vue 2 — HISTORIQUE (Graphe)
+Vue 2 — STATION METEO
+  Header navy 42px : "STATION METEO" centré
+  "Station hors ligne" si !g_stationOK, sinon :
+  Zone T°Ext (y=42..108)  : T°Ext   (vert)   FreeSansBold18pt — label "T. ext"
+  Zone Hum   (y=108..174) : Hum ext (jaune)  FreeSansBold18pt — label "Hum. ext"
+  Zone RSSI  (y=174..240) : RSSI    (violet) FreeSansBold18pt — label "RSSI stat."
+
+Vue 3 — HISTORIQUE (Graphe)
   Header navy 42px : "HISTORIQUE" centré
   drawGraph(Y_HDR+6, 224) → 176 px de hauteur utile
-  Buffer circulaire 576 pts × 5 min = 48h — Air (vert) + Eau (cyan)
+  Buffer circulaire 576 pts × 5 min = 48h — T°Ext (orange) + Eau (cyan)
   Step dynamique : stepF = GRAPH_W / (histCount-1)
   Repères horaires adaptatifs : toutes les 1h (stepF×12 ≥ 16px) ou 6h
-  Légende intégrée en haut-droite du graphe
 
-Vue 3 — INFOS SYSTEME (Debug)
-  Header navy 42px : "INFOS SYSTEME  v1.3" centré
+Vue 4 — INFOS SYSTEME (Debug)
+  Header navy 42px : "INFOS SYSTEME  v1.5" centré
   12 lignes Font2, dy=16, y=44..236
   Lignes 1,6,9,10,11 rafraîchies toutes les 1 s (refreshDebugVolatile)
+  Ligne Station : "Station: OK  xx.xC  xx%  -xx dBm" ou "Station: hors ligne"
 
-Vue 4 — STATISTIQUES
-  Header navy 42px : "STATISTIQUES  v1.3" centré
+Vue 5 — STATISTIQUES
+  Header navy 42px : "STATISTIQUES  v1.5" centré
   T° eau min/max + horodatage (dd/mm HH:MM)
   T° air min/max + horodatage
   Écart Eau-Air (magenta/cyan selon signe)
@@ -236,8 +251,10 @@ loop()  [~10 ms par itération]
 #define SECRET_SSID         "nom_wifi"
 #define SECRET_PASSWORD     "mot_de_passe"
 #define SECRET_OTA_PASSWORD "mot_de_passe_ota"
-#define SECRET_API_KEY      "CLE_THINGSPEAK"
+#define SECRET_API_KEY      "CLE_THINGSPEAK_CANAL_A"
 #define SECRET_CHANNEL_ID   467925
+#define SECRET_READ_KEY_B   "CLE_LECTURE_CANAL_B"    // clé lecture station météo ext.
+#define SECRET_CHANNEL_B    434318
 ```
 
 Fichier exclu du dépôt via `.gitignore` — **ne jamais committer**. Le dépôt GitHub est **public**.

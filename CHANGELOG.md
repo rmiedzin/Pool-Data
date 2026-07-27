@@ -4,6 +4,29 @@ Toutes les modifications notables sont documentées ici.
 
 ---
 
+## [v1.5] — 2026-07-27 — Station météo ext. (Phase 4)
+
+### Ajouté
+- **`readOutdoorData()`** : lecture ThingSpeak canal B (434318) à chaque cycle 5 min — T°ext, humidité ext, RSSI station météo (field1/2/3). Clé `SECRET_READ_KEY_B` dans `secrets.h`
+- **Vue 2 — STATION METEO** (nouvelle) : 3 zones identiques à Pool House — T°Ext (vert) / Hum ext (jaune) / RSSI (violet). Affiche "Station hors ligne" si `!g_stationOK`
+- **Vue 1 — POOL HOUSE** (ex Hum/Press redessinée) : T°Air (vert) / Hum (jaune) / Press (magenta). Affiche "BME280 absent" si `!g_bmeOK`
+- **`g_tempExt`, `g_humExt`, `g_rssiStation`, `g_stationOK`** : nouvelles variables globales données station
+- **`g_extHistory[GRAPH_POINTS]`** : buffer circulaire 48h pour la courbe T°Ext
+- **field6/7/8 ThingSpeak** : T°ext / Hum ext / RSSI station ajoutés à `sendThingSpeak()` conditionnellement à `g_stationOK`
+
+### Modifié
+- **Vue Main** : zone gauche affiche T°Ext (orange) au lieu de T°Air — T°Eau (cyan) inchangée à droite
+- **Graphe** : courbe T°Ext (orange) + Eau (cyan) — Air supprimée, min/max calculés sur `g_extHistory`
+- **Renommage vues** : Hum/Press → POOL HOUSE (vue 1) ; Station Ext. → vue 2 ; Graph 2→3 ; Debug 3→4 ; Stats 4→5
+- **`VIEW_COUNT`** : 5 → 6
+- **Touch long press reset Stats** : `g_view == 4` → `g_view == 5`
+- **Refresh debug 1 s** : `g_view == 3` → `g_view == 4`
+- **`addHistoryPoint(air, eau, ext)`** : signature étendue, alimente `g_extHistory`
+- **`secrets.h`** : `SECRET_READ_KEY_B` + `SECRET_CHANNEL_B` ajoutés
+- **`FW_VERSION`** : `v1.4` → `v1.5`
+
+---
+
 ## [v1.4] — 2026-06-22 — Flèche tendance + économiseur + double tap
 
 ### Ajouté

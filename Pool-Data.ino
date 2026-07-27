@@ -2,7 +2,7 @@
 //  Pool Data — ESP32 D1 Mini
 //  Voir CHANGELOG.md pour l'historique complet
 // ═══════════════════════════════════════════════════════════
-#define FW_VERSION "v1.4"
+#define FW_VERSION "v1.5"
 
 #ifndef ARDUINO_ARCH_ESP32
   #error "Board incorrect — sélectionner : Tools > Board > ESP32 Dev Module"
@@ -40,6 +40,7 @@ unsigned long lastWifiRetry   = 0;
 
 // ── Calibration ──────────────────────────────────────────────
 #define BME_TEMP_OFFSET  -0.4f
+#define WEATHER_CH       434318   // ThingSpeak canal B — station météo extérieure
 
 // ── I²C ─────────────────────────────────────────────────────
 #define SDA_PIN  21
@@ -58,7 +59,7 @@ TFT_eSPI tft = TFT_eSPI();
 #define LED_PIN         19        // GPIO → LED backlight (PWM)
 #define TOUCH_IRQ       13        // GPIO ← T_IRQ du TFT (actif LOW)
 #define SCREEN_TIMEOUT  300000UL  // 5 min sans touch → écran OFF
-#define VIEW_COUNT        5
+#define VIEW_COUNT        6
 
 // ── Timers ───────────────────────────────────────────────────
 const unsigned long READ_INTERVAL = 300000UL;  // 5 min
@@ -81,6 +82,7 @@ char  g_ipBuf[16] = "---";
 #define GRAPH_POINTS 576  // 48h × 12 pts/h
 float g_airHistory[GRAPH_POINTS];
 float g_eauHistory[GRAPH_POINTS];
+float g_extHistory[GRAPH_POINTS];
 int   g_histCount = 0;
 int   g_histHead  = 0;
 
@@ -108,6 +110,12 @@ char  g_airMaxTs[14] = "--/-- --:--";
 esp_reset_reason_t g_resetReason = ESP_RST_UNKNOWN;  // raison du dernier reboot
 bool          g_screensaverOn  = false;              // économiseur actif
 unsigned long g_saverRefresh   = 0;                  // dernier redraw économiseur
+
+// ── Station météo extérieure (canal B ThingSpeak) ────────────
+float g_tempExt     = NAN;
+float g_humExt      = NAN;
+int   g_rssiStation = 0;
+bool  g_stationOK   = false;
 
 // ── Layout pixels (paysage 320×240) ─────────────────────────
 //
@@ -295,9 +303,10 @@ void serialTimestamp() {
 // ─────────────────────────────────────────────────────────────
 // Ajoute un point dans le buffer circulaire
 // ─────────────────────────────────────────────────────────────
-void addHistoryPoint(float air, float eau) {
+void addHistoryPoint(float air, float eau, float ext) {
   g_airHistory[g_histHead] = air;
   g_eauHistory[g_histHead] = eau;
+  g_extHistory[g_histHead] = ext;
   g_histHead = (g_histHead + 1) % GRAPH_POINTS;
   if (g_histCount < GRAPH_POINTS) g_histCount++;
 }
@@ -313,7 +322,7 @@ void drawGraph(int gY0 = GRAPH_Y0, int gY1 = GRAPH_Y1) {
 
   // Légende intégrée — coin haut-droit du graphe
   tft.setTextFont(1); tft.setTextSize(1);
-  tft.setTextColor(TFT_GREEN, 0x0841); tft.setCursor(GRAPH_X1 - 42, gY0 + 3); tft.print("Air");
+  tft.setTextColor(TFT_ORANGE, 0x0841); tft.setCursor(GRAPH_X1 - 42, gY0 + 3); tft.print("Ext");
   tft.setTextColor(TFT_CYAN,   0x0841); tft.setCursor(GRAPH_X1 - 18, gY0 + 3); tft.print("Eau");
 
   if (g_histCount < 2) {
@@ -328,7 +337,7 @@ void drawGraph(int gY0 = GRAPH_Y0, int gY1 = GRAPH_Y1) {
   float vMin = 999.f, vMax = -999.f;
   for (int i = 0; i < g_histCount; i++) {
     int idx = (g_histHead - g_histCount + i + GRAPH_POINTS) % GRAPH_POINTS;
-    float a = g_airHistory[idx];
+    float a = g_extHistory[idx];
     float e = g_eauHistory[idx];
     if (!isnan(a))   { vMin = min(vMin, a); vMax = max(vMax, a); }
     if (e > -100.f)  { vMin = min(vMin, e); vMax = max(vMax, e); }
@@ -369,11 +378,11 @@ void drawGraph(int gY0 = GRAPH_Y0, int gY1 = GRAPH_Y1) {
     if (x0 < GRAPH_X0) x0 = GRAPH_X0;
     if (x1 > GRAPH_X1) x1 = GRAPH_X1;
 
-    float a0 = g_airHistory[idx0], a1 = g_airHistory[idx1];
+    float a0 = g_extHistory[idx0], a1 = g_extHistory[idx1];
     if (!isnan(a0) && !isnan(a1)) {
       int y0 = constrain(gY1 - (int)((a0-vMin)/vRange*gH), gY0, gY1);
       int y1 = constrain(gY1 - (int)((a1-vMin)/vRange*gH), gY0, gY1);
-      tft.drawLine(x0, y0, x1, y1, TFT_GREEN);
+      tft.drawLine(x0, y0, x1, y1, TFT_ORANGE);
     }
     float e0 = g_eauHistory[idx0], e1 = g_eauHistory[idx1];
     if (e0 > -100.f && e1 > -100.f) {
@@ -415,23 +424,62 @@ void drawGraph(int gY0 = GRAPH_Y0, int gY1 = GRAPH_Y1) {
 
 
 // ─────────────────────────────────────────────────────────────
+// Lecture station météo extérieure (ThingSpeak canal B)
+// ─────────────────────────────────────────────────────────────
+bool readOutdoorData() {
+  if (WiFi.status() != WL_CONNECTED) return false;
+  HTTPClient http;
+  char url[100];
+  snprintf(url, sizeof(url),
+    "http://api.thingspeak.com/channels/%d/feeds/last.json?api_key=%s",
+    WEATHER_CH, SECRET_READ_KEY_B);
+  http.setTimeout(8000);
+  http.begin(url);
+  int code = http.GET();
+  if (code != 200) { http.end(); return false; }
+  String payload = http.getString();
+  http.end();
+
+  auto getField = [&](const char* key) -> float {
+    String search = String("\"") + key + "\":\"";
+    int idx = payload.indexOf(search);
+    if (idx < 0) return NAN;
+    int s = idx + search.length();
+    int e = payload.indexOf('"', s);
+    return (e > s) ? payload.substring(s, e).toFloat() : NAN;
+  };
+
+  g_tempExt     = getField("field1");
+  g_humExt      = getField("field2");
+  g_rssiStation = (int)getField("field3");
+  return !isnan(g_tempExt) && !isnan(g_humExt);
+}
+
+
+// ─────────────────────────────────────────────────────────────
 // Envoi ThingSpeak
 // ─────────────────────────────────────────────────────────────
 void sendThingSpeak() {
   if (WiFi.status() != WL_CONNECTED) return;
   if (!g_bmeOK || isnan(g_tempAir)) return;
 
-  char url[192];
+  char url[256];
+  char* p = url; int rem = sizeof(url); int w;
   if (g_dsOK) {
-    snprintf(url, sizeof(url),
+    w = snprintf(p, rem,
       "http://api.thingspeak.com/update?api_key=" SECRET_API_KEY
       "&field1=%.2f&field2=%.2f&field3=%.2f&field4=%.2f&field5=%d",
       g_tempAir, g_tempEau, g_hum, g_press, (int)WiFi.RSSI());
   } else {
-    snprintf(url, sizeof(url),
+    w = snprintf(p, rem,
       "http://api.thingspeak.com/update?api_key=" SECRET_API_KEY
       "&field1=%.2f&field3=%.2f&field4=%.2f&field5=%d",
       g_tempAir, g_hum, g_press, (int)WiFi.RSSI());
+  }
+  p += w; rem -= w;
+  if (g_stationOK && !isnan(g_tempExt)) {
+    snprintf(p, rem, "&field6=%.1f&field7=%.1f&field8=%d",
+             g_tempExt, g_humExt, g_rssiStation);
   }
 
   HTTPClient http;
@@ -561,9 +609,9 @@ void drawViewMain() {
   tft.setCursor(8, 25); tft.print("POOL DATA");
   tft.drawFastHLine(0, Y_HDR,      320, TFT_DARKGREY);   // bas header
   tft.drawFastHLine(0, Y_ZONE_MID, 320, TFT_DARKGREY);   // séparateur zones
-  // Zone Air (y=42..140, centre y=91) — icône 28×63px, centrage iy=58
-  drawIconThermo(22, 58, TFT_GREEN);
-  drawTempZone(g_tempAir, false, TFT_GREEN, 108);
+  // Zone Ext (y=42..140, centre y=91) — T° extérieure station météo
+  drawIconThermo(22, 58, TFT_ORANGE);
+  drawTempZone(g_tempExt, false, TFT_ORANGE, 108);
   // Zone Eau (y=141..240, centre y=190) — icône 38×64px, centrage iy=158
   drawIconDrop(14, 158, TFT_CYAN);
   drawTempZone(g_tempEau, true, TFT_CYAN, 207);
@@ -590,40 +638,134 @@ void drawViewGraph() {
 
 
 // ─────────────────────────────────────────────────────────────
-// ── VUE 1 — Humidité / Pression ─────────────────────────────
+// ── VUE 1 — Pool House (T°Air + Hum + Press) ─────────────────
 // ─────────────────────────────────────────────────────────────
-void drawViewHumPress() {
+void drawViewPoolHouse() {
   tft.fillScreen(TFT_BLACK);
   tft.fillRect(0, 0, 320, Y_HDR, TFT_NAVY);
   tft.setFreeFont(&FreeSansBold9pt7b); tft.setTextSize(1);
   tft.setTextColor(TFT_WHITE, TFT_NAVY);
-  tft.setTextDatum(TC_DATUM); tft.drawString("HUMIDITE / PRESSION", 160, 12); tft.setTextDatum(TL_DATUM);
+  tft.setTextDatum(TC_DATUM); tft.drawString("POOL HOUSE", 160, 12); tft.setTextDatum(TL_DATUM);
   tft.drawFastHLine(0, Y_HDR, 320, TFT_DARKGREY);
 
-  // ── Humidité (zone y=42..140, centre y=91, baseline 103) ──
+  if (!g_bmeOK) {
+    tft.setFreeFont(&FreeSansBold9pt7b); tft.setTextSize(1);
+    tft.setTextColor(TFT_ORANGE, TFT_BLACK);
+    tft.setTextDatum(MC_DATUM);
+    tft.drawString("BME280 absent", 160, 141);
+    tft.setTextDatum(TL_DATUM); tft.setTextFont(1);
+    return;
+  }
+
+  tft.drawFastHLine(0, 108, 320, TFT_DARKGREY);
+  tft.drawFastHLine(0, 174, 320, TFT_DARKGREY);
+
+  // ── T°Air (zone y=42..108, centre y=75, baseline 90) ──
+  {
+    char buf[10];
+    if (!isnan(g_tempAir)) snprintf(buf, sizeof(buf), "%.1f", g_tempAir);
+    else                   strcpy(buf, "--.-");
+    tft.setFreeFont(&FreeSansBold18pt7b); tft.setTextSize(1);
+    int tw = tft.textWidth(buf);
+    tft.setTextColor(!isnan(g_tempAir) ? TFT_GREEN : TFT_DARKGREY, TFT_BLACK);
+    tft.setCursor(160 - tw/2 - 18, 90); tft.print(buf);
+    tft.setTextFont(2); tft.setTextSize(1);
+    tft.setTextColor(TFT_GREEN, TFT_BLACK); tft.print(" C");
+    tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    tft.setCursor(4, 48); tft.print("Air");
+  }
+
+  // ── Hum (zone y=108..174, baseline 158) ──
   {
     char buf[12];
     if (!isnan(g_hum)) snprintf(buf, sizeof(buf), "%.1f %%", g_hum);
     else               strcpy(buf, "--.- %");
-    tft.setFreeFont(&FreeSansBold24pt7b);
-    int w = tft.textWidth(buf);
+    tft.setFreeFont(&FreeSansBold18pt7b); tft.setTextSize(1);
+    int tw = tft.textWidth(buf);
     tft.setTextColor(!isnan(g_hum) ? TFT_YELLOW : TFT_DARKGREY, TFT_BLACK);
-    tft.setCursor(160 - w / 2, 103);
-    tft.print(buf);
+    tft.setCursor(160 - tw/2, 158); tft.print(buf);
   }
 
-  tft.drawFastHLine(0, 140, 320, TFT_DARKGREY);
-
-  // ── Pression (zone y=140..240, centre y=190, baseline 202) ──
+  // ── Pression (zone y=174..240, baseline 224) ──
   {
     char buf[16];
     if (!isnan(g_press)) snprintf(buf, sizeof(buf), "%.1f hPa", g_press);
     else                 strcpy(buf, "---- hPa");
-    tft.setFreeFont(&FreeSansBold24pt7b);
-    int w = tft.textWidth(buf);
+    tft.setFreeFont(&FreeSansBold18pt7b); tft.setTextSize(1);
+    int tw = tft.textWidth(buf);
     tft.setTextColor(!isnan(g_press) ? TFT_MAGENTA : TFT_DARKGREY, TFT_BLACK);
-    tft.setCursor(160 - w / 2, 202);
-    tft.print(buf);
+    tft.setCursor(160 - tw/2, 224); tft.print(buf);
+  }
+
+  tft.setTextFont(1); tft.setTextSize(1);
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  tft.setTextDatum(BR_DATUM);
+  tft.drawString("touch >", 316, 236);
+  tft.setTextDatum(TL_DATUM);
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// ── VUE 2 — Station météo extérieure ────────────────────────
+// ─────────────────────────────────────────────────────────────
+void drawViewStationExt() {
+  tft.fillScreen(TFT_BLACK);
+  tft.fillRect(0, 0, 320, Y_HDR, TFT_NAVY);
+  tft.setFreeFont(&FreeSansBold9pt7b); tft.setTextSize(1);
+  tft.setTextColor(TFT_WHITE, TFT_NAVY);
+  tft.setTextDatum(TC_DATUM); tft.drawString("STATION METEO", 160, 12); tft.setTextDatum(TL_DATUM);
+  tft.drawFastHLine(0, Y_HDR, 320, TFT_DARKGREY);
+
+  if (!g_stationOK) {
+    tft.setFreeFont(&FreeSansBold9pt7b); tft.setTextSize(1);
+    tft.setTextColor(TFT_ORANGE, TFT_BLACK);
+    tft.setTextDatum(MC_DATUM);
+    tft.drawString("Station hors ligne", 160, 141);
+    tft.setTextDatum(TL_DATUM); tft.setTextFont(1);
+    return;
+  }
+
+  tft.drawFastHLine(0, 108, 320, TFT_DARKGREY);
+  tft.drawFastHLine(0, 174, 320, TFT_DARKGREY);
+
+  // ── T°Ext (zone y=42..108, baseline 90) ──
+  {
+    char buf[10];
+    if (!isnan(g_tempExt)) snprintf(buf, sizeof(buf), "%.1f", g_tempExt);
+    else                   strcpy(buf, "--.-");
+    tft.setFreeFont(&FreeSansBold18pt7b); tft.setTextSize(1);
+    int tw = tft.textWidth(buf);
+    tft.setTextColor(!isnan(g_tempExt) ? TFT_GREEN : TFT_DARKGREY, TFT_BLACK);
+    tft.setCursor(160 - tw/2 - 18, 90); tft.print(buf);
+    tft.setTextFont(2); tft.setTextSize(1);
+    tft.setTextColor(TFT_GREEN, TFT_BLACK); tft.print(" C");
+    tft.setTextFont(1); tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    tft.setCursor(4, 48); tft.print("T. ext");
+  }
+
+  // ── Hum ext (zone y=108..174, baseline 158) ──
+  {
+    char buf[12];
+    if (!isnan(g_humExt)) snprintf(buf, sizeof(buf), "%.1f %%", g_humExt);
+    else                  strcpy(buf, "--.- %");
+    tft.setFreeFont(&FreeSansBold18pt7b); tft.setTextSize(1);
+    int tw = tft.textWidth(buf);
+    tft.setTextColor(!isnan(g_humExt) ? TFT_YELLOW : TFT_DARKGREY, TFT_BLACK);
+    tft.setCursor(160 - tw/2, 158); tft.print(buf);
+    tft.setTextFont(1); tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    tft.setCursor(4, 114); tft.print("Hum. ext");
+  }
+
+  // ── RSSI station (zone y=174..240, baseline 224) ──
+  {
+    char buf[14];
+    snprintf(buf, sizeof(buf), "%d dBm", g_rssiStation);
+    tft.setFreeFont(&FreeSansBold18pt7b); tft.setTextSize(1);
+    int tw = tft.textWidth(buf);
+    tft.setTextColor(TFT_PURPLE, TFT_BLACK);
+    tft.setCursor(160 - tw/2, 224); tft.print(buf);
+    tft.setTextFont(1); tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    tft.setCursor(4, 180); tft.print("RSSI stat.");
   }
 
   tft.setTextFont(1); tft.setTextSize(1);
@@ -699,9 +841,16 @@ void drawViewDebug() {
   }
   tft.setTextColor(TFT_WHITE, TFT_BLACK); y += dy;
 
-  // ── 5. MAC ──
-  snprintf(buf, sizeof(buf), "MAC : %s", WiFi.macAddress().c_str());
-  tft.setCursor(4, y); tft.print(buf); y += dy;
+  // ── 5. Station météo ──
+  tft.setTextColor(TFT_WHITE, TFT_BLACK); tft.setCursor(4, y); tft.print("Station: ");
+  if (g_stationOK && !isnan(g_tempExt)) {
+    tft.setTextColor(TFT_GREEN,  TFT_BLACK); tft.print("OK  ");
+    snprintf(buf, sizeof(buf), "%.1fC  %.0f%%  %ddBm", g_tempExt, g_humExt, g_rssiStation);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK); tft.print(buf);
+  } else {
+    tft.setTextColor(TFT_ORANGE, TFT_BLACK); tft.print("hors ligne");
+  }
+  tft.setTextColor(TFT_WHITE, TFT_BLACK); y += dy;
 
   // ── 6. RSSI | WiFi | NTP (3 colonnes) ──
   {
@@ -1013,11 +1162,12 @@ void drawViewStats() {
 // ─────────────────────────────────────────────────────────────
 void drawCurrentView() {
   switch (g_view) {
-    case 0: drawViewMain();     break;
-    case 1: drawViewHumPress(); break;
-    case 2: drawViewGraph();    break;
-    case 3: drawViewDebug();    break;
-    case 4: drawViewStats();    break;
+    case 0: drawViewMain();        break;
+    case 1: drawViewPoolHouse();   break;
+    case 2: drawViewStationExt();  break;
+    case 3: drawViewGraph();       break;
+    case 4: drawViewDebug();       break;
+    case 5: drawViewStats();       break;
     default: g_view = 0; drawViewMain(); break;
   }
 }
@@ -1251,7 +1401,7 @@ void loop() {
   // ── Touch detection ─────────────────────────────────────────
   //   court (< 1500 ms)  : vue suivante
   //   double tap (< 400 ms entre deux taps) : retour vue 0
-  //   long (>= 1500 ms, vue 4) : reset stats
+  //   long (>= 1500 ms, vue 5) : reset stats
   //   n'importe quel tap sur économiseur : réveil
   static bool          lastIRQ        = HIGH;
   static unsigned long touchStartMs   = 0;
@@ -1287,7 +1437,7 @@ void loop() {
   }
 
   if (irqNow == LOW && touchStartMs > 0 && !longPressDone && g_screenOn && !g_screensaverOn) {
-    if (now - touchStartMs >= 1500 && g_view == 4) {
+    if (now - touchStartMs >= 1500 && g_view == 5) {
       longPressDone = true;
       screenOn();
       resetStats();
@@ -1315,7 +1465,7 @@ void loop() {
   }
 
   // ── Refresh sélectif page debug toutes les 1 s ──
-  if (g_screenOn && g_view == 3 && (now - g_debugLastRefresh >= 1000)) {
+  if (g_screenOn && g_view == 4 && (now - g_debugLastRefresh >= 1000)) {
     refreshDebugVolatile();
   }
 
@@ -1343,8 +1493,10 @@ void loop() {
     g_dsOK    = (g_tempEau != DEVICE_DISCONNECTED_C) && !isnan(g_tempEau);
     if (g_dsOK) g_dsReadOK++; else g_dsReadErr++;
 
+    g_stationOK = readOutdoorData();
+
     g_readCount++;
-    addHistoryPoint(g_tempAir, g_tempEau);
+    addHistoryPoint(g_tempAir, g_tempEau, g_tempExt);
     updateStats(g_tempEau, g_tempAir);
 
     // Redessine la vue courante ou rafraîchit l'économiseur
@@ -1360,8 +1512,15 @@ void loop() {
     else         { Serial.print(F("ERR  ")); }
     if (g_wifiOK) {
       Serial.print(F("RSSI:")); Serial.print(WiFi.RSSI()); Serial.print(F("dBm"));
-      Serial.print(F("  AP:")); Serial.println(WiFi.BSSIDstr());
-    } else { Serial.println(); }
+      Serial.print(F("  AP:")); Serial.print(WiFi.BSSIDstr());
+    }
+    if (g_stationOK) {
+      Serial.print(F("  Station:Ext=")); Serial.print(g_tempExt, 1);
+      Serial.print(F("C Hum=")); Serial.print(g_humExt, 1);
+      Serial.print(F("% RSSI=")); Serial.print(g_rssiStation); Serial.println(F("dBm"));
+    } else {
+      Serial.println(F("  Station:hors ligne"));
+    }
   }
 
   // ── ThingSpeak toutes les 5 min ───────────────────────────
