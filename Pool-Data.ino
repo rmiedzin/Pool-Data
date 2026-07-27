@@ -2,7 +2,7 @@
 //  Pool Data — ESP32 D1 Mini
 //  Voir CHANGELOG.md pour l'historique complet
 // ═══════════════════════════════════════════════════════════
-#define FW_VERSION "v1.5"
+#define FW_VERSION "v1.6"
 
 #ifndef ARDUINO_ARCH_ESP32
   #error "Board incorrect — sélectionner : Tools > Board > ESP32 Dev Module"
@@ -40,6 +40,7 @@ unsigned long lastWifiRetry   = 0;
 
 // ── Calibration ──────────────────────────────────────────────
 #define BME_TEMP_OFFSET  -0.4f
+#define DS18_MAX_DELTA   3.0f     // variation max T°eau tolérée par cycle (spike filter)
 #define WEATHER_CH       434318   // ThingSpeak canal B — station météo extérieure
 
 // ── I²C ─────────────────────────────────────────────────────
@@ -1489,9 +1490,24 @@ void loop() {
     ds18b20.requestTemperatures();
     { unsigned long cs = millis();
       while (!ds18b20.isConversionComplete() && millis() - cs < 1000) delay(5); }
-    g_tempEau = ds18b20.getTempCByIndex(0);
-    g_dsOK    = (g_tempEau != DEVICE_DISCONNECTED_C) && !isnan(g_tempEau);
-    if (g_dsOK) g_dsReadOK++; else g_dsReadErr++;
+    { static float s_lastValidEau = NAN;
+      float raw = ds18b20.getTempCByIndex(0);
+      bool  rawOK = (raw != DEVICE_DISCONNECTED_C) && !isnan(raw) && raw != 85.0f;
+      if (rawOK && !isnan(s_lastValidEau) && fabsf(raw - s_lastValidEau) > DS18_MAX_DELTA) {
+        // Spike détecté : on conserve la dernière valeur valide
+        g_tempEau = s_lastValidEau;
+        g_dsOK    = true;
+        g_dsReadErr++;
+      } else if (rawOK) {
+        g_tempEau    = raw;
+        s_lastValidEau = raw;
+        g_dsOK       = true;
+        g_dsReadOK++;
+      } else {
+        g_dsOK = false;
+        g_dsReadErr++;
+      }
+    }
 
     g_stationOK = readOutdoorData();
 

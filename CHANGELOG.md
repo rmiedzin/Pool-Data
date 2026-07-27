@@ -4,6 +4,18 @@ Toutes les modifications notables sont documentées ici.
 
 ---
 
+## [v1.6] — 2026-07-27 — Spike filter DS18B20
+
+### Ajouté
+- **`DS18_MAX_DELTA = 3.0°C`** : filtre de cohérence sur la T°eau — si la variation entre deux lectures (5 min) dépasse 3°C ou si la valeur est `85.0°C` (reset power-on DS18B20), la dernière valeur valide est conservée
+- **`s_lastValidEau`** : variable statique persistant la dernière T°eau valide entre les cycles
+- Spike rejeté → `g_dsReadErr++` (compteur visible dans la vue Debug), valeur précédente envoyée à ThingSpeak → courbe ThingSpeak lisse sans gap
+
+### Modifié
+- **`FW_VERSION`** : `v1.5` → `v1.6`
+
+---
+
 ## [v1.5] — 2026-07-27 — Station météo ext. (Phase 4)
 
 ### Ajouté
