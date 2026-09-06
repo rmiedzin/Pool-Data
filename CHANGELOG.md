@@ -17,6 +17,8 @@ Toutes les modifications notables sont documentées ici.
 - Même fix appliqué à `Pool-House_RLCD42` (v0.7) — défaut commun aux deux firmwares
 
 ### Modifié
+- Vues debug : uptime ESP en **"Xj Yh"** au-delà de 24 h (au lieu de `283h43m`),
+  aligné sur l'app iPhone — format `XhYYm` conservé en dessous de 24 h
 - **`FW_VERSION`** : `v1.7` → `v1.8`
 
 ---

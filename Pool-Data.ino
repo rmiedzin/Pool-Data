@@ -924,7 +924,10 @@ void drawViewDebug() {
   {
     unsigned long upS = millis() / 1000;
     tft.setTextColor(TFT_WHITE, TFT_BLACK); tft.setCursor(4,   y);
-    snprintf(buf, sizeof(buf), "Uptime : %luh%02lum", upS/3600, (upS%3600)/60); tft.print(buf);
+    { unsigned long upD = upS / 86400, upH = (upS % 86400) / 3600;   // "Xj Yh" au-delà de 24h
+      if (upD > 0) snprintf(buf, sizeof(buf), "Uptime : %luj %luh   ", upD, upH);
+      else         snprintf(buf, sizeof(buf), "Uptime : %luh%02lum", upH, (upS%3600)/60); }
+    tft.print(buf);
     tft.setCursor(160, y);
     snprintf(buf, sizeof(buf), "Heap : %lukB   ", (unsigned long)ESP.getFreeHeap()/1024); tft.print(buf);
     y += dy;
@@ -1008,7 +1011,10 @@ void refreshDebugVolatile() {
   {
     unsigned long upS = millis() / 1000;
     tft.setTextColor(TFT_WHITE, TFT_BLACK); tft.setCursor(4,   y9);
-    snprintf(buf, sizeof(buf), "Uptime : %luh%02lum", upS/3600, (upS%3600)/60); tft.print(buf);
+    { unsigned long upD = upS / 86400, upH = (upS % 86400) / 3600;   // "Xj Yh" au-delà de 24h
+      if (upD > 0) snprintf(buf, sizeof(buf), "Uptime : %luj %luh   ", upD, upH);
+      else         snprintf(buf, sizeof(buf), "Uptime : %luh%02lum", upH, (upS%3600)/60); }
+    tft.print(buf);
     tft.setCursor(160, y9);
     snprintf(buf, sizeof(buf), "Heap : %lukB   ", (unsigned long)ESP.getFreeHeap()/1024); tft.print(buf);
   }
