@@ -1557,26 +1557,6 @@ void loop() {
 
     g_stationOK = readOutdoorData();
 
-    // ── Anti-camping mesh ─────────────────────────────────
-    // Un client ESP32 reste collé à son nœud mesh même à -85 dBm.
-    // Après 3 cycles sous RSSI_ROAM_MIN, disconnect+begin force un
-    // scan complet qui raccroche le meilleur nœud.
-    if (g_wifiOK) {
-      static uint8_t s_badRssi = 0;
-      int rssi = (int)WiFi.RSSI();
-      if (rssi < RSSI_ROAM_MIN) {
-        if (++s_badRssi >= 3) {
-          s_badRssi = 0;
-          serialTimestamp();
-          Serial.print(F("WiFi ")); Serial.print(rssi);
-          Serial.println(F(" dBm — re-scan du mesh"));
-          WiFi.disconnect();
-          delay(100);
-          WiFi.begin(WIFI_SSID, WIFI_PASS);
-        }
-      } else s_badRssi = 0;
-    }
-
     g_readCount++;
     addHistoryPoint(g_tempAir, g_tempEau, g_tempExt);
     updateStats(g_tempEau, g_tempAir);
@@ -1611,6 +1591,27 @@ void loop() {
     sendThingSpeak();
     // Les compteurs TS seront visibles dans refreshDebugVolatile() ≤1s — pas de redraw complet ici
     g_debugLastRefresh = 0;   // force un refresh volatile immédiat au prochain tick
+
+    // ── Anti-camping mesh ─────────────────────────────────
+    // APRÈS l'envoi TS du cycle : le re-scan (~2-5 s de coupure) a ainsi
+    // 5 min devant lui avant la prochaine requête. Un client ESP32 reste
+    // collé à son nœud mesh même à -85 dBm ; après 3 cycles sous
+    // RSSI_ROAM_MIN, disconnect+begin force un scan → meilleur nœud.
+    {
+      static uint8_t s_badRssi = 0;
+      int rssi = (int)WiFi.RSSI();
+      if (rssi < RSSI_ROAM_MIN && rssi != 0) {
+        if (++s_badRssi >= 3) {
+          s_badRssi = 0;
+          serialTimestamp();
+          Serial.print(F("WiFi ")); Serial.print(rssi);
+          Serial.println(F(" dBm — re-scan du mesh"));
+          WiFi.disconnect();
+          delay(100);
+          WiFi.begin(WIFI_SSID, WIFI_PASS);
+        }
+      } else s_badRssi = 0;
+    }
   }
 
   // ── Resync NTP toutes les 1 h ─────────────────────────────
