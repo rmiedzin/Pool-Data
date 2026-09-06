@@ -11,6 +11,12 @@ Toutes les modifications notables sont documentées ici.
   de nœud *volontaires* (anti-camping) sont comptées séparément — un roam levait
   faussement le compteur de drops (flag `g_roaming` consommé par le monitoring)
 - Vues debug : colonne RSSI enrichie `-85dBm D0 R1` (Drops / Roams depuis le boot)
+- **Connexion « scan d'abord »** (`connectBestAP()`) : au boot, scan puis connexion
+  ciblée par BSSID sur le nœud le plus fort — le `begin()` aveugle laissait le mesh
+  aiguiller n'importe où. Fonction commune avec l'anti-camping (`scanBestAP()`)
+- **Hystérésis anti-camping** (`RSSI_ROAM_CLEAR` -70) : un mesh dansant sur le
+  seuil (-79, -74, -75, constaté le 06/09) remettait le compteur à zéro sans fin ;
+  désormais seul un signal ≥ -70 le désarme, entre -75 et -70 il tient
 - **`FW_VERSION`** : `v1.8` → `v1.9`
 
 ---

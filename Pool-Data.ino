@@ -38,11 +38,42 @@ const unsigned long TS_INTERVAL = 300000UL;          // 5 min
 // Anti-camping mesh : sous RSSI_ROAM_MIN pendant 3 cycles (15 min), scan
 // EN RESTANT CONNECTÉ puis bascule ciblée seulement si un nœud au moins
 // RSSI_ROAM_GAIN dB meilleur est vu — jamais de saut dans le vide.
-#define RSSI_ROAM_MIN  -75
-#define RSSI_ROAM_GAIN  10
+#define RSSI_ROAM_MIN   -75
+#define RSSI_ROAM_GAIN   10
+#define RSSI_ROAM_CLEAR -70   // hystérésis : seul un signal ≥ -70 désarme le compteur
 uint32_t g_wifiDrops = 0;      // coupures WiFi SUBIES depuis le boot (hors roams)
 uint32_t g_roamCount = 0;      // bascules de nœud mesh volontaires (anti-camping)
 bool     g_roaming   = false;  // levé avant le disconnect d'un roam → non compté en drop
+
+// ── Choix du meilleur nœud mesh ("scan d'abord") ─────────────
+static bool scanBestAP(int &best, int32_t &chan, uint8_t bssid[6]) {
+  int16_t n = WiFi.scanNetworks();
+  if (n < 0) { Serial.print(F("WiFi : scan ECHEC (")); Serial.print(n); Serial.println(F(")")); }
+  best = -127; bool found = false;
+  for (int16_t i = 0; i < n; i++) {
+    if (WiFi.SSID(i) == WIFI_SSID && WiFi.RSSI(i) > best) {
+      best = WiFi.RSSI(i);
+      chan = WiFi.channel(i);
+      memcpy(bssid, WiFi.BSSID(i), 6);
+      found = true;
+    }
+  }
+  WiFi.scanDelete();
+  return found;
+}
+
+// Connexion ciblée sur le meilleur nœud — le begin() aveugle laissait le
+// mesh nous aiguiller n'importe où. Repli begin() classique si scan vide.
+static void connectBestAP() {
+  int best = 0; int32_t chan = 0; uint8_t bssid[6];
+  if (scanBestAP(best, chan, bssid)) {
+    Serial.print(F("WiFi : meilleur noeud ")); Serial.print(best); Serial.println(F(" dBm"));
+    WiFi.begin(WIFI_SSID, WIFI_PASS, chan, bssid);
+  } else {
+    Serial.println(F("WiFi : scan vide — begin classique"));
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+  }
+}
 unsigned long lastTS          = 0;
 unsigned long lastWifiRetry   = 0;
 
@@ -1299,7 +1330,8 @@ void setup() {
   splashLog("> WiFi connexion...");
   WiFi.persistent(false);
   WiFi.setAutoReconnect(true);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  WiFi.mode(WIFI_STA);
+  connectBestAP();   // scan d'abord, connexion ciblée sur le meilleur nœud
   {
     unsigned long t0 = millis();
     int ndot = 0;
@@ -1618,18 +1650,8 @@ void loop() {
           // Le power save WiFi (actif par défaut) fait échouer ou rater les
           // scans effectués en restant associé → coupé le temps du scan.
           WiFi.setSleep(false);
-          int16_t n = WiFi.scanNetworks();          // synchrone, reste associé
-          int  best = -127; int32_t bestChan = 0;
-          uint8_t bestBssid[6]; bool found = false;
-          for (int16_t i = 0; i < n; i++) {
-            if (WiFi.SSID(i) == WIFI_SSID && WiFi.RSSI(i) > best) {
-              best     = WiFi.RSSI(i);
-              bestChan = WiFi.channel(i);
-              memcpy(bestBssid, WiFi.BSSID(i), 6);
-              found = true;
-            }
-          }
-          WiFi.scanDelete();
+          int best = 0; int32_t bestChan = 0; uint8_t bestBssid[6];
+          bool found = scanBestAP(best, bestChan, bestBssid);
           serialTimestamp();
           if (found && best >= rssi + RSSI_ROAM_GAIN) {
             Serial.print(F("Roam mesh : ")); Serial.print(rssi);
@@ -1639,18 +1661,20 @@ void loop() {
             WiFi.disconnect();
             delay(100);
             WiFi.begin(WIFI_SSID, WIFI_PASS, bestChan, bestBssid);
-            // sleep laissé OFF pendant la (re)connexion — restauré au prochain
-            // passage ici si besoin (boîtier sur secteur, sans conséquence)
+            // sleep laissé OFF pendant la (re)connexion (boîtier sur secteur)
           } else {
             Serial.print(F("WiFi ")); Serial.print(rssi);
-            if (n < 0) { Serial.print(F(" dBm — scan ECHEC (")); Serial.print(n); Serial.println(F("), on garde le lien")); }
-            else { Serial.print(F(" dBm — scan: ")); Serial.print(n);
-                   Serial.print(F(" reseaux, meilleur ")); Serial.print(found ? best : 0);
-                   Serial.println(F(" dBm — on garde le lien")); }
+            Serial.print(F(" dBm — meilleur vu ")); Serial.print(found ? best : 0);
+            Serial.println(F(" dBm — on garde le lien"));
             WiFi.setSleep(true);
           }
         }
-      } else s_badRssi = 0;
+      } else if (rssi >= RSSI_ROAM_CLEAR || rssi == 0) {
+        // Hystérésis : seul un signal vraiment bon (≥ -70) désarme le compteur.
+        // Entre -75 et -70 il TIENT — un mesh qui danse sur le seuil ne peut
+        // plus le remettre à zéro sans fin (constaté le 06/09 : -79, -74, -75).
+        s_badRssi = 0;
+      }
     }
   }
 
