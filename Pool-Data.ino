@@ -2,7 +2,7 @@
 //  Pool Data — ESP32 D1 Mini
 //  Voir CHANGELOG.md pour l'historique complet
 // ═══════════════════════════════════════════════════════════
-#define FW_VERSION "v1.8"
+#define FW_VERSION "v1.9"
 
 #ifndef ARDUINO_ARCH_ESP32
   #error "Board incorrect — sélectionner : Tools > Board > ESP32 Dev Module"
@@ -40,6 +40,9 @@ const unsigned long TS_INTERVAL = 300000UL;          // 5 min
 // RSSI_ROAM_GAIN dB meilleur est vu — jamais de saut dans le vide.
 #define RSSI_ROAM_MIN  -75
 #define RSSI_ROAM_GAIN  10
+uint32_t g_wifiDrops = 0;      // coupures WiFi SUBIES depuis le boot (hors roams)
+uint32_t g_roamCount = 0;      // bascules de nœud mesh volontaires (anti-camping)
+bool     g_roaming   = false;  // levé avant le disconnect d'un roam → non compté en drop
 unsigned long lastTS          = 0;
 unsigned long lastWifiRetry   = 0;
 
@@ -896,7 +899,8 @@ void drawViewDebug() {
                   rssi >= -70 ? TFT_YELLOW :
                   rssi >= -80 ? TFT_ORANGE : TFT_RED;
     tft.setTextColor(TFT_WHITE, TFT_BLACK); tft.setCursor(4,   y); tft.print("RSSI : ");
-    snprintf(buf, sizeof(buf), "%ddBm", rssi);
+    snprintf(buf, sizeof(buf), "%ddBm D%lu R%lu", rssi,
+             (unsigned long)g_wifiDrops, (unsigned long)g_roamCount);
     tft.setTextColor(rc, TFT_BLACK); tft.print(buf);
     tft.setTextColor(TFT_WHITE, TFT_BLACK); tft.setCursor(140, y); tft.print("WiFi : ");
     tft.setTextColor(g_wifiOK ? TFT_GREEN : TFT_RED, TFT_BLACK); tft.print(g_wifiOK ? "OK" : "HS");
@@ -999,11 +1003,12 @@ void refreshDebugVolatile() {
                   rssi >= -55 ? TFT_GREEN  :
                   rssi >= -70 ? TFT_YELLOW :
                   rssi >= -80 ? TFT_ORANGE : TFT_RED;
-    char rssiVal[10];
-    if (g_wifiOK) snprintf(rssiVal, sizeof(rssiVal), "%ddBm", rssi);
+    char rssiVal[22];
+    if (g_wifiOK) snprintf(rssiVal, sizeof(rssiVal), "%ddBm D%lu R%lu", rssi,
+                           (unsigned long)g_wifiDrops, (unsigned long)g_roamCount);
     else          strcpy(rssiVal, "---");
     tft.setTextColor(TFT_WHITE, TFT_BLACK); tft.setCursor(4,   y6); tft.print("RSSI : ");
-    snprintf(buf, sizeof(buf), "%-8s", rssiVal);   // padding 8 chars → couvre -100dBm
+    snprintf(buf, sizeof(buf), "%-15s", rssiVal);   // padding (max avant col WiFi x140)
     tft.setTextColor(rc,        TFT_BLACK); tft.print(buf);
     tft.setTextColor(TFT_WHITE, TFT_BLACK); tft.setCursor(140, y6); tft.print("WiFi : ");
     tft.setTextColor(g_wifiOK ? TFT_GREEN : TFT_RED, TFT_BLACK); tft.print(g_wifiOK ? "OK " : "HS ");
@@ -1436,6 +1441,10 @@ void loop() {
   bool wifiNow = (WiFi.status() == WL_CONNECTED);
   if (wifiNow != g_wifiOK) {
     g_wifiOK = wifiNow;
+    if (!g_wifiOK) {
+      if (g_roaming) g_roaming = false;   // coupure volontaire (roam) — non comptée
+      else           g_wifiDrops++;
+    }
     Serial.println(g_wifiOK ? F("WiFi reconnecte") : F("WiFi perdu"));
     if (g_view == 0 && g_screenOn) updateHeader();
   }
@@ -1622,6 +1631,8 @@ void loop() {
           if (found && best >= rssi + RSSI_ROAM_GAIN) {
             Serial.print(F("Roam mesh : ")); Serial.print(rssi);
             Serial.print(F(" dBm -> ")); Serial.print(best); Serial.println(F(" dBm"));
+            g_roaming = true;
+            g_roamCount++;
             WiFi.disconnect();
             delay(100);
             WiFi.begin(WIFI_SSID, WIFI_PASS, bestChan, bestBssid);

@@ -4,6 +4,17 @@ Toutes les modifications notables sont documentées ici.
 
 ---
 
+## [v1.9] — 2026-09-06 — Compteurs drops / roams distincts
+
+### Ajouté
+- **`g_wifiDrops` / `g_roamCount`** : les coupures WiFi *subies* et les bascules
+  de nœud *volontaires* (anti-camping) sont comptées séparément — un roam levait
+  faussement le compteur de drops (flag `g_roaming` consommé par le monitoring)
+- Vues debug : colonne RSSI enrichie `-85dBm D0 R1` (Drops / Roams depuis le boot)
+- **`FW_VERSION`** : `v1.8` → `v1.9`
+
+---
+
 ## [v1.8] — 2026-09-06 — Déverrouillage du spike filter DS18B20
 
 ### Corrigé
