@@ -1,3 +1,7 @@
+# Config board — Pool-Data (ESP32 DevKit + TFT + BME280 + DS18B20)
+# Board: ESP32 Dev Module | Partition: Minimal SPIFFS 1.9MB APP with OTA (obligatoire)
+# Upload filaire 460800 ; OTA disponible (port réseau "Pool-Data") — port 3232.
+# Piège macOS Tahoe : si le port OTA n'apparaît pas, voir fix mdns-discovery dans ROADMAP.md.
 default_fqbn: esp32:esp32:esp32dev:UploadSpeed=460800,PartitionScheme=min_spiffs
 default_port: ""
 

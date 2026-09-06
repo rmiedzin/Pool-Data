@@ -2,7 +2,7 @@
 //  Pool Data — ESP32 D1 Mini
 //  Voir CHANGELOG.md pour l'historique complet
 // ═══════════════════════════════════════════════════════════
-#define FW_VERSION "v1.6"
+#define FW_VERSION "v1.8"
 
 #ifndef ARDUINO_ARCH_ESP32
   #error "Board incorrect — sélectionner : Tools > Board > ESP32 Dev Module"
@@ -462,25 +462,45 @@ bool readOutdoorData() {
 // ─────────────────────────────────────────────────────────────
 void sendThingSpeak() {
   if (WiFi.status() != WL_CONNECTED) return;
-  if (!g_bmeOK || isnan(g_tempAir)) return;
 
+  // Envoi champ par champ selon les capteurs disponibles.
+  // field5 (RSSI) est TOUJOURS envoyé : il sert de heartbeat — un BME280
+  // ou un DS18B20 en panne ne doit plus rendre le canal muet (l'app
+  // affichait "hors ligne" alors que l'ESP32 tournait).
+  // Chaque champ est testé séparément (backport RLCD42) : une garde commune
+  // laisserait passer un "&fieldN=nan" quand une seule valeur est invalide.
   char url[256];
   char* p = url; int rem = sizeof(url); int w;
-  if (g_dsOK) {
-    w = snprintf(p, rem,
-      "http://api.thingspeak.com/update?api_key=" SECRET_API_KEY
-      "&field1=%.2f&field2=%.2f&field3=%.2f&field4=%.2f&field5=%d",
-      g_tempAir, g_tempEau, g_hum, g_press, (int)WiFi.RSSI());
-  } else {
-    w = snprintf(p, rem,
-      "http://api.thingspeak.com/update?api_key=" SECRET_API_KEY
-      "&field1=%.2f&field3=%.2f&field4=%.2f&field5=%d",
-      g_tempAir, g_hum, g_press, (int)WiFi.RSSI());
-  }
+  w = snprintf(p, rem,
+    "http://api.thingspeak.com/update?api_key=" SECRET_API_KEY
+    "&field5=%d", (int)WiFi.RSSI());
   p += w; rem -= w;
+  if (g_bmeOK && !isnan(g_tempAir)) {
+    w = snprintf(p, rem, "&field1=%.2f", g_tempAir);
+    p += w; rem -= w;
+  }
+  if (g_bmeOK && !isnan(g_hum)) {
+    w = snprintf(p, rem, "&field3=%.2f", g_hum);
+    p += w; rem -= w;
+  }
+  if (g_bmeOK && !isnan(g_press)) {
+    w = snprintf(p, rem, "&field4=%.2f", g_press);
+    p += w; rem -= w;
+  }
+  if (g_dsOK && !isnan(g_tempEau)) {
+    w = snprintf(p, rem, "&field2=%.2f", g_tempEau);
+    p += w; rem -= w;
+  }
   if (g_stationOK && !isnan(g_tempExt)) {
-    snprintf(p, rem, "&field6=%.1f&field7=%.1f&field8=%d",
-             g_tempExt, g_humExt, g_rssiStation);
+    w = snprintf(p, rem, "&field6=%.1f", g_tempExt);
+    p += w; rem -= w;
+  }
+  if (g_stationOK && !isnan(g_humExt)) {
+    w = snprintf(p, rem, "&field7=%.1f", g_humExt);
+    p += w; rem -= w;
+  }
+  if (g_stationOK) {
+    snprintf(p, rem, "&field8=%d", g_rssiStation);
   }
 
   HTTPClient http;
@@ -489,10 +509,20 @@ void sendThingSpeak() {
   int httpCode = http.GET();
 
   if (httpCode == 200) {
-    g_lastTsEntry = (uint32_t)http.getString().toInt();
-    g_tsSentOK++;
-    serialTimestamp();
-    Serial.print(F("TS OK — entree #")); Serial.println(g_lastTsEntry);
+    // ThingSpeak répond 200 avec un corps "0" quand l'écriture est REFUSÉE
+    // (2 updates du même canal à moins de 15 s) — backport RLCD42 :
+    // à compter en échec, pas en succès.
+    uint32_t entry = (uint32_t)http.getString().toInt();
+    if (entry > 0) {
+      g_lastTsEntry = entry;
+      g_tsSentOK++;
+      serialTimestamp();
+      Serial.print(F("TS OK — entree #")); Serial.println(g_lastTsEntry);
+    } else {
+      g_tsFailCount++;
+      serialTimestamp();
+      Serial.println(F("TS REJET (cadence < 15s)"));
+    }
   } else {
     g_tsFailCount++;
     serialTimestamp();
@@ -1367,9 +1397,9 @@ void setup() {
   g_view = 0;
   drawCurrentView();
 
-  // Première lecture immédiate, premier envoi TS différé de 5 min
+  // Première lecture ET premier envoi TS immédiats (feedback rapide après boot/OTA)
   lastRead = millis() - READ_INTERVAL;
-  lastTS   = millis();
+  lastTS   = millis() - TS_INTERVAL;
 
   // ── Watchdog 30 s ──
   // Core v3.x initialise le TWDT avant setup() → deinit d'abord
@@ -1490,18 +1520,25 @@ void loop() {
     ds18b20.requestTemperatures();
     { unsigned long cs = millis();
       while (!ds18b20.isConversionComplete() && millis() - cs < 1000) delay(5); }
-    { static float s_lastValidEau = NAN;
+    { static float   s_lastValidEau = NAN;
+      static uint8_t s_rejects      = 0;   // rejets consécutifs (déverrouillage)
       float raw = ds18b20.getTempCByIndex(0);
       bool  rawOK = (raw != DEVICE_DISCONNECTED_C) && !isnan(raw) && raw != 85.0f;
-      if (rawOK && !isnan(s_lastValidEau) && fabsf(raw - s_lastValidEau) > DS18_MAX_DELTA) {
-        // Spike détecté : on conserve la dernière valeur valide
+      if (rawOK && !isnan(s_lastValidEau)
+          && fabsf(raw - s_lastValidEau) > DS18_MAX_DELTA && s_rejects < 3) {
+        // Spike détecté : on conserve la dernière valeur valide.
+        // Après 3 rejets consécutifs (~15 min), la lecture suivante est acceptée :
+        // ce n'est plus un parasite mais une référence fausse (glitch à la 1ère
+        // lecture du boot, non filtrée) ou un vrai changement rapide de T°.
+        s_rejects++;
         g_tempEau = s_lastValidEau;
         g_dsOK    = true;
         g_dsReadErr++;
       } else if (rawOK) {
-        g_tempEau    = raw;
+        s_rejects      = 0;
+        g_tempEau      = raw;
         s_lastValidEau = raw;
-        g_dsOK       = true;
+        g_dsOK         = true;
         g_dsReadOK++;
       } else {
         g_dsOK = false;

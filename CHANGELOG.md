@@ -4,6 +4,47 @@ Toutes les modifications notables sont documentées ici.
 
 ---
 
+## [v1.8] — 2026-09-06 — Déverrouillage du spike filter DS18B20
+
+### Corrigé
+- **Le spike filter pouvait se verrouiller définitivement** : la 1ère lecture du boot
+  n'est pas filtrée (référence vide) — si elle est aberrante (constaté le 06/09 :
+  34,75° au boot pour une eau à 30,8°), toutes les vraies lectures s'écartent de
+  plus de `DS18_MAX_DELTA` de la référence et sont rejetées **jusqu'au reboot**
+- Fix : compteur de rejets consécutifs — après **3 rejets** (~15 min), la lecture
+  suivante est acceptée comme nouvelle référence (déverrouillage). Les pics isolés
+  (1-2 lectures) restent filtrés comme avant
+- Même fix appliqué à `Pool-House_RLCD42` (v0.7) — défaut commun aux deux firmwares
+
+### Modifié
+- **`FW_VERSION`** : `v1.7` → `v1.8`
+
+---
+
+## [v1.7] — 2026-09-06 — Envoi ThingSpeak résilient aux pannes capteurs
+
+### Corrigé
+- **`sendThingSpeak()` bloquait tout envoi si le BME280 était en erreur** (`if (!g_bmeOK) return;`) — panne BME du 06/09 : canal A muet 2h30+, apps PoolWatch "hors ligne" alors que l'ESP32 tournait (OLED vivant, DS18B20 et relais station OK)
+- **Rejet ThingSpeak compté comme succès** *(backport `Pool-House_RLCD42`)* : TS répond
+  HTTP 200 avec un corps `"0"` quand l'écriture est refusée (2 updates < 15 s) —
+  désormais compté dans `g_tsFailCount` avec trace `TS REJET (cadence < 15s)`
+
+### Modifié
+- URL ThingSpeak construite champ par champ, **chaque champ gardé individuellement**
+  avec test `isnan` *(backport `Pool-House_RLCD42` — une garde commune peut laisser
+  passer un `&fieldN=nan`)* : `field5` (RSSI) **toujours** envoyé (heartbeat),
+  `field1/3/4` si BME OK et valeur valide, `field2` si DS OK, `field6-8` si station OK
+- Premier envoi ThingSpeak **immédiat au boot** (`lastTS = millis() - TS_INTERVAL`)
+  au lieu de +5 min — feedback rapide après reboot/OTA
+- **`FW_VERSION`** : `v1.6` → `v1.7`
+
+> **Note backporting** : `Pool-House_RLCD42` (le remplaçant en développement) avait
+> déjà corrigé ces deux points dans son `sendThingSpeak()`. Penser à comparer les
+> deux implémentations dans les deux sens à chaque bug/feature — voir aussi ses
+> reprises documentées depuis Pool-Data (compteurs debug, spike filter DS18B20).
+
+---
+
 ## [v1.6] — 2026-07-27 — Spike filter DS18B20
 
 ### Ajouté
