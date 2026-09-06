@@ -16,6 +16,12 @@ Toutes les modifications notables sont documentées ici.
   (1-2 lectures) restent filtrés comme avant
 - Même fix appliqué à `Pool-House_RLCD42` (v0.7) — défaut commun aux deux firmwares
 
+### Ajouté
+- **Anti-camping mesh** *(backport station météo)* : un client ESP32 reste collé
+  à son nœud mesh même à -85 dBm (constaté le 06/09 sur le RLCD42 : OTA au ralenti
+  puis broken pipe). Après 3 cycles de 5 min sous `RSSI_ROAM_MIN` (-75 dBm),
+  `disconnect+begin` force un scan complet → raccroche le meilleur nœud
+
 ### Modifié
 - Vues debug : uptime ESP en **"Xj Yh"** au-delà de 24 h (au lieu de `283h43m`),
   aligné sur l'app iPhone — format `XhYYm` conservé en dessous de 24 h

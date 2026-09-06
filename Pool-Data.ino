@@ -35,6 +35,9 @@ const unsigned long NTP_SYNC_INTERVAL = 3600000UL;
 
 // ── ThingSpeak ───────────────────────────────────────────────
 const unsigned long TS_INTERVAL = 300000UL;          // 5 min
+// Anti-camping mesh : sous ce RSSI pendant 3 cycles (15 min), re-scan WiFi
+// pour raccrocher le meilleur nœud (backport station météo / RLCD42).
+#define RSSI_ROAM_MIN  -75
 unsigned long lastTS          = 0;
 unsigned long lastWifiRetry   = 0;
 
@@ -1553,6 +1556,26 @@ void loop() {
     }
 
     g_stationOK = readOutdoorData();
+
+    // ── Anti-camping mesh ─────────────────────────────────
+    // Un client ESP32 reste collé à son nœud mesh même à -85 dBm.
+    // Après 3 cycles sous RSSI_ROAM_MIN, disconnect+begin force un
+    // scan complet qui raccroche le meilleur nœud.
+    if (g_wifiOK) {
+      static uint8_t s_badRssi = 0;
+      int rssi = (int)WiFi.RSSI();
+      if (rssi < RSSI_ROAM_MIN) {
+        if (++s_badRssi >= 3) {
+          s_badRssi = 0;
+          serialTimestamp();
+          Serial.print(F("WiFi ")); Serial.print(rssi);
+          Serial.println(F(" dBm — re-scan du mesh"));
+          WiFi.disconnect();
+          delay(100);
+          WiFi.begin(WIFI_SSID, WIFI_PASS);
+        }
+      } else s_badRssi = 0;
+    }
 
     g_readCount++;
     addHistoryPoint(g_tempAir, g_tempEau, g_tempExt);
