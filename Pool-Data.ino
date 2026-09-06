@@ -1615,6 +1615,9 @@ void loop() {
       if (rssi < RSSI_ROAM_MIN && rssi != 0) {
         if (++s_badRssi >= 3) {
           s_badRssi = 0;
+          // Le power save WiFi (actif par défaut) fait échouer ou rater les
+          // scans effectués en restant associé → coupé le temps du scan.
+          WiFi.setSleep(false);
           int16_t n = WiFi.scanNetworks();          // synchrone, reste associé
           int  best = -127; int32_t bestChan = 0;
           uint8_t bestBssid[6]; bool found = false;
@@ -1636,9 +1639,15 @@ void loop() {
             WiFi.disconnect();
             delay(100);
             WiFi.begin(WIFI_SSID, WIFI_PASS, bestChan, bestBssid);
+            // sleep laissé OFF pendant la (re)connexion — restauré au prochain
+            // passage ici si besoin (boîtier sur secteur, sans conséquence)
           } else {
             Serial.print(F("WiFi ")); Serial.print(rssi);
-            Serial.println(F(" dBm — rien de mieux vu, on garde le lien"));
+            if (n < 0) { Serial.print(F(" dBm — scan ECHEC (")); Serial.print(n); Serial.println(F("), on garde le lien")); }
+            else { Serial.print(F(" dBm — scan: ")); Serial.print(n);
+                   Serial.print(F(" reseaux, meilleur ")); Serial.print(found ? best : 0);
+                   Serial.println(F(" dBm — on garde le lien")); }
+            WiFi.setSleep(true);
           }
         }
       } else s_badRssi = 0;
