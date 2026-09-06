@@ -35,9 +35,11 @@ const unsigned long NTP_SYNC_INTERVAL = 3600000UL;
 
 // ── ThingSpeak ───────────────────────────────────────────────
 const unsigned long TS_INTERVAL = 300000UL;          // 5 min
-// Anti-camping mesh : sous ce RSSI pendant 3 cycles (15 min), re-scan WiFi
-// pour raccrocher le meilleur nœud (backport station météo / RLCD42).
+// Anti-camping mesh : sous RSSI_ROAM_MIN pendant 3 cycles (15 min), scan
+// EN RESTANT CONNECTÉ puis bascule ciblée seulement si un nœud au moins
+// RSSI_ROAM_GAIN dB meilleur est vu — jamais de saut dans le vide.
 #define RSSI_ROAM_MIN  -75
+#define RSSI_ROAM_GAIN  10
 unsigned long lastTS          = 0;
 unsigned long lastWifiRetry   = 0;
 
@@ -1592,23 +1594,41 @@ void loop() {
     // Les compteurs TS seront visibles dans refreshDebugVolatile() ≤1s — pas de redraw complet ici
     g_debugLastRefresh = 0;   // force un refresh volatile immédiat au prochain tick
 
-    // ── Anti-camping mesh ─────────────────────────────────
-    // APRÈS l'envoi TS du cycle : le re-scan (~2-5 s de coupure) a ainsi
-    // 5 min devant lui avant la prochaine requête. Un client ESP32 reste
-    // collé à son nœud mesh même à -85 dBm ; après 3 cycles sous
-    // RSSI_ROAM_MIN, disconnect+begin force un scan → meilleur nœud.
+    // ── Anti-camping mesh ("look before leap") ────────────
+    // APRÈS l'envoi TS du cycle : la bascule éventuelle a 5 min devant
+    // elle. Après 3 cycles sous RSSI_ROAM_MIN : scan SANS se déconnecter
+    // (~2 s, le lien tient) puis bascule ciblée par BSSID *uniquement* si
+    // un nœud ≥ RSSI_ROAM_GAIN dB meilleur a été vu. Sinon on garde le
+    // lien faible qui marche.
     {
       static uint8_t s_badRssi = 0;
       int rssi = (int)WiFi.RSSI();
       if (rssi < RSSI_ROAM_MIN && rssi != 0) {
         if (++s_badRssi >= 3) {
           s_badRssi = 0;
+          int16_t n = WiFi.scanNetworks();          // synchrone, reste associé
+          int  best = -127; int32_t bestChan = 0;
+          uint8_t bestBssid[6]; bool found = false;
+          for (int16_t i = 0; i < n; i++) {
+            if (WiFi.SSID(i) == WIFI_SSID && WiFi.RSSI(i) > best) {
+              best     = WiFi.RSSI(i);
+              bestChan = WiFi.channel(i);
+              memcpy(bestBssid, WiFi.BSSID(i), 6);
+              found = true;
+            }
+          }
+          WiFi.scanDelete();
           serialTimestamp();
-          Serial.print(F("WiFi ")); Serial.print(rssi);
-          Serial.println(F(" dBm — re-scan du mesh"));
-          WiFi.disconnect();
-          delay(100);
-          WiFi.begin(WIFI_SSID, WIFI_PASS);
+          if (found && best >= rssi + RSSI_ROAM_GAIN) {
+            Serial.print(F("Roam mesh : ")); Serial.print(rssi);
+            Serial.print(F(" dBm -> ")); Serial.print(best); Serial.println(F(" dBm"));
+            WiFi.disconnect();
+            delay(100);
+            WiFi.begin(WIFI_SSID, WIFI_PASS, bestChan, bestBssid);
+          } else {
+            Serial.print(F("WiFi ")); Serial.print(rssi);
+            Serial.println(F(" dBm — rien de mieux vu, on garde le lien"));
+          }
         }
       } else s_badRssi = 0;
     }

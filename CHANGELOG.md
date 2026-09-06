@@ -17,10 +17,12 @@ Toutes les modifications notables sont documentées ici.
 - Même fix appliqué à `Pool-House_RLCD42` (v0.7) — défaut commun aux deux firmwares
 
 ### Ajouté
-- **Anti-camping mesh** *(backport station météo)* : un client ESP32 reste collé
-  à son nœud mesh même à -85 dBm (constaté le 06/09 sur le RLCD42 : OTA au ralenti
-  puis broken pipe). Après 3 cycles de 5 min sous `RSSI_ROAM_MIN` (-75 dBm),
-  `disconnect+begin` force un scan complet → raccroche le meilleur nœud
+- **Anti-camping mesh « look before leap »** *(backport station météo)* : un client
+  ESP32 reste collé à son nœud mesh même à -85 dBm (constaté le 06/09 sur le RLCD42).
+  Après 3 cycles de 5 min sous `RSSI_ROAM_MIN` (-75 dBm) : scan **en restant
+  connecté**, puis bascule ciblée par BSSID uniquement si un nœud ≥ +10 dB
+  (`RSSI_ROAM_GAIN`) a été vu — jamais de déconnexion sans meilleur nœud identifié.
+  Exécuté après l'envoi TS du cycle pour ne perdre aucun point de données
 
 ### Modifié
 - Vues debug : uptime ESP en **"Xj Yh"** au-delà de 24 h (au lieu de `283h43m`),
